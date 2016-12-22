@@ -31,6 +31,8 @@
 #include "erl_driver.h"
 #include <stdlib.h>
 #include <stdarg.h>
+#include <dlfcn.h>
+#include <pthread.h>
 #include "erl_misc_utils.h"
 
 #ifdef __WIN32__
@@ -397,6 +399,30 @@ add_extra_suffixes(char *prog, int type)
 #endif
 
    return res;
+}
+
+static int
+osv_run(char *path, int argc, char **argv)
+{
+  int (*mainfun)(int, char **) = NULL;
+  int result;
+
+  void *elf_handle = dlopen(path, RTLD_LAZY);
+
+  if (!elf_handle)
+    goto err;
+
+  mainfun = (int (*)(int, char **)) dlsym(elf_handle, "main");
+  result = (mainfun)?mainfun(argc, argv):1;
+  dlclose(elf_handle);
+
+  if(!mainfun)
+    goto err;
+
+  return result;
+ err:
+  error("Error %d executing \'%s\'.", errno, path);
+  return 1;
 }
 
 #ifdef __WIN32__
@@ -1099,52 +1125,7 @@ int main(int argc, char **argv)
 #else
 
  skip_arg_massage:
-    if (start_detached) {
-	int status = fork();
-	if (status != 0)	/* Parent */
-	    return 0;
-
-	if (reset_cerl_detached)
-	    putenv("CERL_DETACHED_PROG=");
-
-	/* Detach from controlling terminal */
-#ifdef HAVE_SETSID
-	setsid();
-#elif defined(TIOCNOTTY)
-	{
-	  int fd = open("/dev/tty", O_RDWR);
-	  if (fd >= 0) {
-	    ioctl(fd, TIOCNOTTY, NULL);
-	    close(fd);
-	  }
-	}
-#endif
-
-	status = fork();
-	if (status != 0)	/* Parent */
-	    return 0;
-
-	/*
-	 * Grandchild.
-	 */
-	close(0);
-	open("/dev/null", O_RDONLY);
-	close(1);
-	open("/dev/null", O_WRONLY);
-	close(2);
-	open("/dev/null", O_WRONLY);
-#ifdef DEBUG
-	execvp(emu, Eargsp); /* "xterm ..." needs to search the path */
-#endif
-    } 
-#ifdef DEBUG
-    else
-#endif
-    {
-	execv(emu, Eargsp);
-    }
-    error("Error %d executing \'%s\'.", errno, emu);
-    return 1;
+    return osv_run(emu, EargsCnt, Eargsp);
 #endif
 }
 
@@ -1206,6 +1187,28 @@ usage_format(char *format, ...)
     usage_aux();
 }
 
+static void*
+osv_sh(void *arg)
+{
+  char *command = (char *)arg;
+  char *argv[] = {command, NULL};
+  osv_run(command, 1, argv);
+  return NULL;
+}
+
+static int
+osv_system(char *command)
+{
+  pthread_t thread;
+  char *command_copy;
+  
+  if (!command)
+    return 1;
+
+  command_copy = strsave(command);
+  return pthread_create(&thread, NULL, osv_sh, command_copy);
+}
+
 void
 start_epmd(char *epmd)
 {
@@ -1221,7 +1224,7 @@ start_epmd(char *epmd)
 	erts_snprintf(epmd_cmd, sizeof(epmd_cmd), "%s" DIRSEP "epmd", bindir);
 	arg1 = "-daemon";
 #else
-	erts_snprintf(epmd_cmd, sizeof(epmd_cmd), "\"%s" DIRSEP "epmd\" -daemon", bindir);
+	erts_snprintf(epmd_cmd, sizeof(epmd_cmd), "%s" DIRSEP "epmd", bindir);
 #endif
     } 
 #ifdef __WIN32__
@@ -1245,9 +1248,9 @@ start_epmd(char *epmd)
 	    result = 0;
     }
 #else
-    result = system(epmd);
+    result = osv_system(epmd);
 #endif
-    if (result == -1) {
+    if (result != 0) {
       fprintf(stderr, "Error spawning %s (error %d)\n", epmd_cmd,errno);
       exit(1);
     }

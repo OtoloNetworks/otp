@@ -1,0 +1,20 @@
+Erlang OTP for OSv
+
+To build this, you need to compile this like so:
+
+OSV_DIR=wherever_you_installed_OSv_source
+export ERL_TOP=`pwd`
+export CFLAGS=-fpie
+export LDFLAGS="-pie -rdynamic"
+./otp_build autoconf
+./configure -prefix=/usr --libdir=/usr/lib64 \
+  --disable-hipe --without-hipe --without-odbc \
+  --enable-builtin-zlib --with-termcap=ncurses \
+  --without-erl_interface --without-javac \
+  --without-jinterface --with-ssl=$OSV_DIR/external/x64/misc.bin/usr
+
+make
+
+mkdir release
+export DESTDIR=`pwd`/release
+make install

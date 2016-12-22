@@ -82,18 +82,16 @@ get_env(Service, Param) ->
 
 open_port(Name, Opts) ->
     PrivDir = code:priv_dir(os_mon),
-    ReleasedPath = filename:join([PrivDir,"bin",Name]),
-    %% Check os_mon*/priv/bin/Name
-    case filelib:is_regular(ReleasedPath) of
-	true ->
-	    erlang:open_port({spawn, "\""++ReleasedPath++"\""}, Opts);
-	false ->
-	    %% Use os_mon*/priv/bin/Arch/Name
-	    ArchPath =
-		filename:join(
-		  [PrivDir,"bin",erlang:system_info(system_architecture),Name]),
-	    erlang:open_port({spawn, "\""++ArchPath++"\""}, Opts)
-    end.
+    ReleasedPath = filename:join([PrivDir,"lib",[Name,".so"]]),
+    Path =
+        case filelib:is_regular(ReleasedPath) of
+            true ->
+                filename:join([PrivDir,"lib"]);
+            false ->
+                filename:join([PrivDir,"lib",erlang:system_info(system_architecture)])
+        end,
+    ok = erl_ddll:load_driver(Path, Name),
+    erlang:open_port({spawn_driver, Name}, Opts).
 
 
 %%%-----------------------------------------------------------------

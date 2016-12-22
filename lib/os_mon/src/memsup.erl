@@ -800,7 +800,7 @@ port_init() ->
     port_idle(Port).
 
 start_portprogram() ->
-    os_mon:open_port("memsup",[{packet,1}]).
+    os_mon:open_port("memsup",[]).
 
 %% The connected process loops are a bit awkward (several different
 %% functions doing almost the same thing) as
@@ -836,10 +836,9 @@ port_idle(Port) ->
 
 get_memory_usage(Port, Alloc, Memsup) ->
     receive
-	{Port, {data, Data}} when Alloc==undefined ->
-	    get_memory_usage(Port, erlang:list_to_integer(Data, 16), Memsup);
-	{Port, {data, Data}} ->
-	    Total = erlang:list_to_integer(Data, 16),
+	{Port, Data} when Alloc==undefined ->
+	    get_memory_usage(Port, Data, Memsup);
+	{Port, Total} ->
 	    Memsup ! {collected_sys, {Alloc, Total}},
 	    port_idle(Port);
 	cancel ->
@@ -853,9 +852,9 @@ get_memory_usage(Port, Alloc, Memsup) ->
     end.
 get_memory_usage_cancelled(Port, Alloc) ->
     receive
-	{Port, {data, _Data}} when Alloc==undefined ->
+	{Port, _Data} when Alloc==undefined ->
 	    get_memory_usage_cancelled(Port, 0);
-	{Port, {data, _Data}} ->
+	{Port, _Data} ->
 	    port_idle(Port);
 	close ->
 	    port_close(Port);
@@ -879,10 +878,10 @@ get_ext_memory_usage(Port, Accum, Memsup) ->
 	    {?SWAP_FREE,	  free_swap}
 	],
     receive
-	{Port, {data, [?SHOW_SYSTEM_MEM_END]}} ->
+	{Port, ?SHOW_SYSTEM_MEM_END} ->
 	    Memsup ! {collected_ext_sys, Accum},
 	    port_idle(Port);
-	{Port, {data, [Tag]}} ->
+	{Port, Tag} ->
 	    case lists:keysearch(Tag, 1, Tab) of
 		{value, {Tag, ATag}} ->
 		    get_ext_memory_usage(ATag, Port, Accum, Memsup);
@@ -912,9 +911,9 @@ get_ext_memory_usage_cancelled(Port) ->
 	    {?SWAP_FREE,	  free_swap}
 	],
     receive
-	{Port, {data, [?SHOW_SYSTEM_MEM_END]}} ->
+	{Port, ?SHOW_SYSTEM_MEM_END} ->
 	    port_idle(Port);
-	{Port, {data, [Tag]}} ->
+	{Port, Tag} ->
 	    case lists:keysearch(Tag, 1, Tab) of
 		{value, {Tag, ATag}} ->
 		    get_ext_memory_usage_cancelled(ATag, Port);
@@ -931,8 +930,8 @@ get_ext_memory_usage_cancelled(Port) ->
 
 get_ext_memory_usage(ATag, Port, Accum0, Memsup) ->
     receive
-	{Port, {data, Data}} ->
-	    Accum = [{ATag,erlang:list_to_integer(Data, 16)}|Accum0],
+	{Port, Data} ->
+	    Accum = [{ATag,Data}|Accum0],
 	    get_ext_memory_usage(Port, Accum, Memsup);
 	cancel ->
 	    get_ext_memory_usage_cancelled(ATag, Port);
@@ -945,7 +944,7 @@ get_ext_memory_usage(ATag, Port, Accum0, Memsup) ->
     end.
 get_ext_memory_usage_cancelled(_ATag, Port) ->
     receive
-	{Port, {data, _Data}} ->
+	{Port, _Data} ->
 	    get_ext_memory_usage_cancelled(Port);
 	close ->
 	    port_close(Port);

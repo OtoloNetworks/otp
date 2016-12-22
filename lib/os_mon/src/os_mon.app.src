@@ -26,7 +26,7 @@
     {registered, [os_mon_sup, os_mon_sysinfo, disksup, memsup, cpu_sup, 
                   os_sup_server]},
     {applications, [kernel, stdlib, sasl]},
-    {env, [{start_cpu_sup, true},
+    {env, [{start_cpu_sup, false},
 	   {start_disksup, true},
 	   {start_memsup, true},
 	   {start_os_sup, false}]},

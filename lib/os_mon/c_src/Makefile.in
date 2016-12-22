@@ -19,6 +19,7 @@
 #
 include $(ERL_TOP)/make/target.mk
 include $(ERL_TOP)/make/$(TARGET)/otp.mk
+include $(ERL_TOP)/make/$(TARGET)/otp_ded.mk
 
 CC = @CC@
 LD = @LD@
@@ -26,6 +27,7 @@ LIBS = @LIBS@
 CPU_SUP_LIBS = @CPU_SUP_LIBS@
 
 BINDIR = ../priv/bin/$(TARGET)
+LIBDIR = ../priv/lib/$(TARGET)
 OBJDIR = ../priv/obj/$(TARGET)
 
 # ----------------------------------------------------
@@ -63,13 +65,15 @@ EVLOG_OBJECTS = \
 ENTRY_OBJ=$(ERL_TOP)/erts/obj/$(TARGET)/port_entry.o
 PORT_ENTRY_POINT=erl_port_entry
 ENTRY_LDFLAGS=-entry:$(PORT_ENTRY_POINT)
+SOLIBS=
 else
 PROGRAMS = \
-	memsup @os_mon_programs@
+	@os_mon_programs@
 C_FILES= $(PROGRAMS:%=%.c)
+SOLIBS=memsup disksup
 endif
 
-TARGET_FILES= $(PROGRAMS:%=$(BINDIR)/%)
+TARGET_FILES= $(PROGRAMS:%=$(BINDIR)/%) $(SOLIBS:%=$(LIBDIR)/%.so)
 
 LDFLAGS = @LDFLAGS@
 
@@ -79,7 +83,7 @@ ALL_CFLAGS = @CFLAGS@ @DEFS@ $(CFLAGS)
 # Targets
 # ----------------------------------------------------
 
-_create_dirs := $(shell mkdir -p $(OBJDIR) $(BINDIR))
+_create_dirs := $(shell mkdir -p $(OBJDIR) $(LIBDIR) $(BINDIR))
 
 debug opt: $(TARGET_FILES)
 
@@ -106,11 +110,20 @@ $(BINDIR)/ferrule: $(OBJDIR)/ferrule.o
 $(BINDIR)/mod_syslog: $(OBJDIR)/mod_syslog.o
 	$(V_LD) $(LDFLAGS) -o $@ $<
 
-$(BINDIR)/memsup: $(OBJDIR)/memsup.o
-	$(V_LD) $(LDFLAGS) -o $@ $<
+$(LIBDIR)/memsup.so: $(OBJDIR)/memsup.o
+	$(DED_LD) $(DED_LDFLAGS) -o $@ $<
+
+$(LIBDIR)/disksup.so: $(OBJDIR)/disksup.o
+	$(DED_LD) $(DED_LDFLAGS) -o $@ $<
 
 $(BINDIR)/cpu_sup: $(OBJDIR)/cpu_sup.o
 	$(V_LD) $(LDFLAGS) -o $@ $< $(CPU_SUP_LIBS)
+
+$(OBJDIR)/memsup.o: memsup.c
+	$(DED_CC) -c -o $@ $(DED_CFLAGS) $(DED_INCLUDES) $<
+
+$(OBJDIR)/disksup.o: disksup.c
+	$(DED_CC) -c -o $@ $(DED_CFLAGS) $(DED_INCLUDES) $<
 
 $(OBJDIR)/%.o: %.c
 	$(V_CC) -c -o $@ $(ALL_CFLAGS) $<
@@ -129,6 +142,8 @@ release_spec: opt
 	$(INSTALL_DIR) "$(RELSYSDIR)/src"
 	$(INSTALL_DATA) $(C_FILES) "$(RELSYSDIR)/src"
 	$(INSTALL_DIR) "$(RELSYSDIR)/priv/bin"
-	$(INSTALL_PROGRAM) $(TARGET_FILES) "$(RELSYSDIR)/priv/bin"
+	$(INSTALL_PROGRAM) $(PROGRAMS:%=$(BINDIR)/%) "$(RELSYSDIR)/priv/bin"
+	$(INSTALL_DIR) "$(RELSYSDIR)/priv/lib"
+	$(INSTALL_PROGRAM) $(SOLIBS:%=$(LIBDIR)/%.so) "$(RELSYSDIR)/priv/lib"
 
 release_docs_spec:

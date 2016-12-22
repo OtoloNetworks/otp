@@ -93,7 +93,7 @@ param_default(disksup_posix_only) -> false.
 %% gen_server callbacks
 %%----------------------------------------------------------------------
 
-init([]) ->  
+init([]) ->
     process_flag(trap_exit, true),
     process_flag(priority, low),
 
@@ -227,139 +227,26 @@ get_os(PosixOnly) ->
 
 %%--Port handling functions---------------------------------------------
 
-start_portprogram() -> 
-    open_port({spawn, "sh -s disksup 2>&1"}, [stream]).
+start_portprogram() ->
+    os_mon:open_port(disksup, []).
 
-my_cmd(Cmd0, Port) ->
-    %% Insert a new line after the command, in case the command
-    %% contains a comment character
-    Cmd = io_lib:format("(~s\n) </dev/null; echo  \"\^M\"\n", [Cmd0]),
-    Port ! {self(), {command, [Cmd, 10]}},
-    get_reply(Port, []).
+%%--Check disk space----------------------------------------------------
 
-get_reply(Port, O) ->
-    receive 
-        {Port, {data, N}} -> 
-            case newline(N, O) of
-                {ok, Str} -> Str;
-                {more, Acc} -> get_reply(Port, Acc)
-            end;
+check_disk_space({unix, linux}, Port, Threshold) ->
+    Port ! {self(), {command, <<>>}},
+    receive
+        {Port, Msg} ->
+            [check_disk(Info, Threshold) || Info <- Msg ],
+            Msg;
         {'EXIT', Port, Reason} ->
 	    exit({port_died, Reason})
     end.
 
-newline([13|_], B) -> {ok, lists:reverse(B)};
-newline([H|T], B) -> newline(T, [H|B]);
-newline([], B) -> {more, B}.
-
-%%--Check disk space----------------------------------------------------
-
-check_disk_space({win32,_}, not_used, Threshold) ->
-    Result = os_mon_sysinfo:get_disk_info(),
-    check_disks_win32(Result, Threshold);
-check_disk_space({unix, solaris}, Port, Threshold) ->
-    Result = my_cmd("/usr/bin/df -lk", Port),
-    check_disks_solaris(skip_to_eol(Result), Threshold);
-check_disk_space({unix, irix}, Port, Threshold) ->
-    Result = my_cmd("/usr/sbin/df -lk",Port),
-    check_disks_irix(skip_to_eol(Result), Threshold);
-check_disk_space({unix, linux}, Port, Threshold) ->
-    Result = my_cmd("/bin/df -lk", Port),
-    check_disks_solaris(skip_to_eol(Result), Threshold);
-check_disk_space({unix, posix}, Port, Threshold) ->
-    Result = my_cmd("df -k -P", Port),
-    check_disks_solaris(skip_to_eol(Result), Threshold);
-check_disk_space({unix, dragonfly}, Port, Threshold) ->
-    Result = my_cmd("/bin/df -k -t ufs,hammer", Port),
-    check_disks_solaris(skip_to_eol(Result), Threshold);
-check_disk_space({unix, freebsd}, Port, Threshold) ->
-    Result = my_cmd("/bin/df -k -l", Port),
-    check_disks_solaris(skip_to_eol(Result), Threshold);
-check_disk_space({unix, openbsd}, Port, Threshold) ->
-    Result = my_cmd("/bin/df -k -l", Port),
-    check_disks_solaris(skip_to_eol(Result), Threshold);
-check_disk_space({unix, netbsd}, Port, Threshold) ->
-    Result = my_cmd("/bin/df -k -t ffs", Port),
-    check_disks_solaris(skip_to_eol(Result), Threshold);
-check_disk_space({unix, sunos4}, Port, Threshold) ->
-    Result = my_cmd("df", Port),
-    check_disks_solaris(skip_to_eol(Result), Threshold);
-check_disk_space({unix, darwin}, Port, Threshold) ->
-    Result = my_cmd("/bin/df -i -k -t ufs,hfs", Port),
-    check_disks_susv3(skip_to_eol(Result), Threshold).
-
-% This code works for Linux and FreeBSD as well
-check_disks_solaris("", _Threshold) ->
-    [];
-check_disks_solaris("\n", _Threshold) ->
-    [];
-check_disks_solaris(Str, Threshold) ->
-    case io_lib:fread("~s~d~d~d~d%~s", Str) of
-	{ok, [_FS, KB, _Used, _Avail, Cap, MntOn], RestStr} ->
-	    if
-		Cap >= Threshold ->
-		    set_alarm({disk_almost_full, MntOn}, []);
-		true ->
-		    clear_alarm({disk_almost_full, MntOn})
-	    end,
-	    [{MntOn, KB, Cap} |
-	     check_disks_solaris(RestStr, Threshold)];
-	_Other ->
-	    check_disks_solaris(skip_to_eol(Str),Threshold)
-    end.
-
-% Parse per SUSv3 specification, notably recent OS X
-check_disks_susv3("", _Threshold) ->
-    [];
-check_disks_susv3("\n", _Threshold) ->
-    [];
-check_disks_susv3(Str, Threshold) ->
-    case io_lib:fread("~s~d~d~d~d%~d~d~d%~s", Str) of
-    {ok, [_FS, KB, _Used, _Avail, Cap, _IUsed, _IFree, _ICap, MntOn], RestStr} ->
-	    if
-		Cap >= Threshold ->
-		    set_alarm({disk_almost_full, MntOn}, []);
-		true ->
-		    clear_alarm({disk_almost_full, MntOn})
-	    end,
-	    [{MntOn, KB, Cap} |
-	     check_disks_susv3(RestStr, Threshold)];
-	_Other ->
-	    check_disks_susv3(skip_to_eol(Str),Threshold)
-    end.
-
-%% Irix: like Linux with an extra FS type column and no '%'.
-check_disks_irix("", _Threshold) -> [];
-check_disks_irix("\n", _Threshold) -> [];
-check_disks_irix(Str, Threshold) ->
-    case io_lib:fread("~s~s~d~d~d~d~s", Str) of
-	{ok, [_FS, _FSType, KB, _Used, _Avail, Cap, MntOn], RestStr} ->
-	    if Cap >= Threshold -> set_alarm({disk_almost_full, MntOn}, []);
-	       true             -> clear_alarm({disk_almost_full, MntOn}) end,
-	    [{MntOn, KB, Cap} | check_disks_irix(RestStr, Threshold)];
-	_Other ->
-	    check_disks_irix(skip_to_eol(Str),Threshold)
-    end.
-
-check_disks_win32([], _Threshold) ->
-    [];
-check_disks_win32([H|T], Threshold) ->
-    case io_lib:fread("~s~s~d~d~d", H) of
-	{ok, [Drive,"DRIVE_FIXED",BAvail,BTot,_TotFree], _RestStr} ->
-	    Cap = trunc((BTot-BAvail) / BTot * 100),
-	    if
-		 Cap >= Threshold ->
-		    set_alarm({disk_almost_full, Drive}, []);
-		true ->
-		    clear_alarm({disk_almost_full, Drive})
-	    end,
-	    [{Drive, BTot div 1024, Cap} |
-	     check_disks_win32(T, Threshold)]; % Return Total Capacity in Kbytes
-	{ok,_,_RestStr} ->
-	    check_disks_win32(T,Threshold);
-	_Other ->
-	    []
-    end.
+check_disk({MntOn, _KB, Cap}, Threshold)
+  when Cap >= Threshold ->
+    set_alarm({disk_almost_full, MntOn}, []);
+check_disk({MntOn, _KB, _Cap}, _Threshold) ->
+    clear_alarm({disk_almost_full, MntOn}).
 
 %%--Alarm handling------------------------------------------------------
 
@@ -394,10 +281,3 @@ clear_alarms() ->
 %% Type conversion
 minutes_to_ms(Minutes) ->
     trunc(60000*Minutes).
-
-skip_to_eol([]) ->
-    [];
-skip_to_eol([$\n | T]) ->
-    T;
-skip_to_eol([_ | T]) ->
-    skip_to_eol(T).

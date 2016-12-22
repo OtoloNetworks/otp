@@ -1824,7 +1824,7 @@ fi
 
 dnl Check for setns
 AC_CHECK_HEADERS(sched.h setns.h)
-AC_CHECK_FUNCS([setns])
+dnl AC_CHECK_FUNCS([setns])
 
 HAVE_VALGRIND=no
 AC_CHECK_HEADER(valgrind/valgrind.h, HAVE_VALGRIND=yes)
@@ -2118,7 +2118,7 @@ AC_CHECK_FUNCS([getipnodebyname getipnodebyaddr gethostbyname2])
 AC_CHECK_FUNCS([ieee_handler fpsetmask finite isnan isinf res_gethostbyname dlopen \
 		pread pwrite memmove strerror strerror_r strncasecmp \
 		gethrtime localtime_r gmtime_r inet_pton \
-		memcpy mallopt sbrk _sbrk __sbrk brk _brk __brk \
+		memcpy mallopt _sbrk __sbrk brk _brk __brk \
 		flockfile fstat strlcpy strlcat setsid posix2time time2posix \
 		setlocale nl_langinfo poll mlockall ppoll])
 
@@ -2177,7 +2177,7 @@ case $host_os in
 	    AC_MSG_CHECKING([for mremap])
 	    AC_MSG_RESULT(not using for OSE) ;;
         *)
-	    AC_CHECK_FUNCS([mmap mremap]) ;;
+	    AC_CHECK_FUNCS([mmap]) ;;
 esac
 
 
