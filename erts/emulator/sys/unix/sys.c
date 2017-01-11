@@ -801,7 +801,8 @@ prepare_crash_dump(int secs)
 	if (nice_val > 39) {
 	    nice_val = 39;
 	}
-	erts_silence_warn_unused_result(nice(nice_val));
+        // **FIXME** no nice() in osv..
+	// erts_silence_warn_unused_result(nice(nice_val));
     }
 
     UnUseTmpHeapNoproc(NUFBUF);
