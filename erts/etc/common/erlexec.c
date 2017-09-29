@@ -28,6 +28,11 @@
 #include "erl_driver.h"
 #include "erl_misc_utils.h"
 
+#ifdef __OSv__
+#include <dlfcn.h>
+#include <pthread.h>
+#endif
+
 #ifdef __WIN32__
 #  include "erl_version.h"
 #  include "init_file.h"
@@ -339,6 +344,36 @@ free_env_val(char *value)
 	free(value);
 #endif
 }
+
+#ifdef __OSv__
+static int
+osv_run(char *path, int argc, char **argv)
+{
+    int (*mainfun)(int, char **) = NULL;
+    int result;
+
+    void *elf_handle = dlopen(path, RTLD_LAZY);
+
+    if (!elf_handle) {
+        error("dlopen failed... %s\n", path);
+        goto err;
+    }
+
+    mainfun = (int (*)(int, char **)) dlsym(elf_handle, "main");
+    result = (mainfun) ? mainfun(argc, argv) : 1;
+    dlclose(elf_handle);
+
+    if(!mainfun) {
+        error("No mainfun");
+        goto err;
+    }
+
+    return result;
+ err:
+    error("BORK! Error %d executing \'%s\'.", errno, path);
+    return 1;
+}
+#endif
 
 /*
  * Add the type and architecture suffix to the program name if needed.
@@ -1045,7 +1080,7 @@ int main(int argc, char **argv)
     if (haltAfterwards) {
 	add_args("-s", "erlang", "halt", NULL);
     }
-    
+
     if (isdistributed && !no_epmd)
 	start_epmd(epmd_prog);
 
@@ -1130,6 +1165,7 @@ int main(int argc, char **argv)
 #else
 
  skip_arg_massage:
+#ifndef __OSv__
     if (start_detached) {
 	int status = fork();
 	if (status != 0)	/* Parent */
@@ -1180,6 +1216,9 @@ int main(int argc, char **argv)
         error("Error %d executing \'%s\'.", errno, emu);
     }
     return 1;
+#else /* __OSv__ */
+    return osv_run(emu, EargsCnt, Eargsp);
+#endif /* __OSv__ */
 #endif
 }
 
@@ -1230,6 +1269,34 @@ usage_format(char *format, ...)
     usage_aux();
 }
 
+#ifdef __OSv__
+static void*
+osv_sh(void *arg)
+{
+    char *command = (char *)arg;
+    char *argv[] = {command, NULL};
+    osv_run(command, 1, argv);
+    return NULL;
+}
+
+static int
+osv_system(char *command)
+{
+    pthread_t thread;
+    char *command_copy;
+
+    if (!command)
+        return -1;
+
+    command_copy = strsave(command);
+    if (0 == pthread_create(&thread, NULL, osv_sh, command_copy)) {
+        return 1;
+    } else {
+        return -1;
+    }
+}
+#endif /* __OSv__ */
+
 void
 start_epmd(char *epmd)
 {
@@ -1245,7 +1312,11 @@ start_epmd(char *epmd)
 	erts_snprintf(epmd_cmd, sizeof(epmd_cmd), "%s" DIRSEP "epmd", bindir);
 	arg1 = "-daemon";
 #else
+#ifndef __OSv__
 	erts_snprintf(epmd_cmd, sizeof(epmd_cmd), "\"%s" DIRSEP "epmd\" -daemon", bindir);
+#else
+	erts_snprintf(epmd_cmd, sizeof(epmd_cmd), "%s" DIRSEP "epmd", bindir);
+#endif
 #endif
     } 
 #ifdef __WIN32__
@@ -1269,7 +1340,11 @@ start_epmd(char *epmd)
 	    result = 0;
     }
 #else
+#ifndef __OSv__
     result = system(epmd);
+#else
+    result = osv_system(epmd);
+#endif
 #endif
     if (result == -1) {
       fprintf(stderr, "Error spawning %s (error %d)\n", epmd_cmd,errno);

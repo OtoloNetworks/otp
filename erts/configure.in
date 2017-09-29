@@ -1576,6 +1576,7 @@ dnl epoll_wait timeouts
 AC_CHECK_HEADERS([sys/timerfd.h])
 
 dnl Check for kernel SCTP support
+if test -z "$OSV_DIR" ; then
 AC_SUBST(LIBSCTP)
 if test "x$enable_sctp" != "xno" ; then
     AC_CHECK_HEADER(netinet/sctp.h,
@@ -1587,6 +1588,7 @@ if test "x$enable_sctp" != "xno" ; then
 	 #include <sys/socket.h>
 	 #endif
 	])
+fi
 fi
 
 if test x"$ac_cv_header_netinet_sctp_h" = x"yes"; then
@@ -1626,7 +1628,9 @@ fi
 
 dnl Check for setns
 AC_CHECK_HEADERS(sched.h setns.h)
-AC_CHECK_FUNCS([setns])
+if test -z "$OSV_DIR" ; then
+  AC_CHECK_FUNCS([setns])
+fi
 
 HAVE_VALGRIND=no
 AC_CHECK_HEADER(valgrind/valgrind.h, HAVE_VALGRIND=yes)
@@ -1952,12 +1956,22 @@ fi
 
 AC_CHECK_FUNCS([getipnodebyname getipnodebyaddr gethostbyname2])
 
-AC_CHECK_FUNCS([ieee_handler fpsetmask finite isnan isinf res_gethostbyname dlopen \
+if test -n "$OSV_DIR" ;
+then
+  AC_CHECK_FUNCS([ieee_handler fpsetmask finite isnan isinf res_gethostbyname dlopen \
+		pread pwrite memmove strerror strerror_r strncasecmp \
+		gethrtime localtime_r gmtime_r inet_pton mprotect \
+		mmap memcpy mallopt _sbrk __sbrk brk _brk __brk \
+		flockfile fstat strlcpy strlcat setsid posix2time time2posix \
+		setlocale nl_langinfo poll mlockall ppoll])
+else
+  AC_CHECK_FUNCS([ieee_handler fpsetmask finite isnan isinf res_gethostbyname dlopen \
 		pread pwrite memmove strerror strerror_r strncasecmp \
 		gethrtime localtime_r gmtime_r inet_pton mprotect \
 		mmap mremap memcpy mallopt sbrk _sbrk __sbrk brk _brk __brk \
 		flockfile fstat strlcpy strlcat setsid posix2time time2posix \
 		setlocale nl_langinfo poll mlockall ppoll])
+fi
 
 AC_MSG_CHECKING([for isfinite])
 AC_TRY_LINK([#include <math.h>],
@@ -3766,7 +3780,7 @@ dnl		so it is - be adoptable
 	else
 		SSL_LIBDIR="$with_ssl/lib"
 	fi
-    else	 
+    else
 	SSL_LIBDIR="$with_ssl/lib"
     fi
     if test '!' -f "${SSL_LIBDIR}/lib${SSL_CRYPTO_LIBNAME}.a"; then
