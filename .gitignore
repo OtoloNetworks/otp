@@ -41,6 +41,7 @@ powerpc-unknown-linux-gnu
 aarch64-unknown-linux-gnu
 i386-elf-ose
 powerpc-unknown-ose
+x86_64-osv-linux-gnu
 
 # Mac OS X
 a.out.dSYM/

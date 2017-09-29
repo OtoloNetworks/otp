@@ -102,6 +102,12 @@ else
 ERTS_INTERNAL_LIBS=-L../../lib/internal/$(TARGET) -lerts_internal$(ERTS_LIB_TYPEMARKER) @ERTS_INTERNAL_X_LIBS@ -lm
 endif
 
+ifeq ($(findstring osv,$(TARGET)),osv)
+ERTS_OSV_LIBS=-ldl -lpthread
+else
+ERTS_OSV_LIBS=
+endif
+
 ERTS_LIB = $(ERL_TOP)/erts/lib_src/obj/$(TARGET)/$(TYPE)/MADE
 
 # ----------------------------------------------------
@@ -415,7 +421,7 @@ $(OBJDIR)/safe_string.o: $(ETC)/safe_string.c $(RC_GENERATED)
 
 ifneq ($(TARGET),win32)
 $(BINDIR)/$(ERLEXEC): $(OBJDIR)/$(ERLEXEC).o $(ERTS_LIB)
-	$(ld_verbose)$(PURIFY) $(LD) $(LDFLAGS) -o $@ $(OBJDIR)/$(ERLEXEC).o $(ERTS_INTERNAL_LIBS)
+	$(ld_verbose)$(PURIFY) $(LD) $(LDFLAGS) -o $@ $(OBJDIR)/$(ERLEXEC).o $(ERTS_INTERNAL_LIBS) $(ERTS_OSV_LIBS)
 
 $(OBJDIR)/$(ERLEXEC).o: $(ERLEXECDIR)/$(ERLEXEC).c $(RC_GENERATED)
 	$(V_CC) -I$(EMUDIR) $(CFLAGS) -o $@ -c $(ERLEXECDIR)/$(ERLEXEC).c

@@ -23,6 +23,7 @@
 int
 sys_uds_readv(int fd, struct iovec *iov, size_t iov_len,
              int *fds, int fd_count, int flags) {
+#ifndef __OSv__
     struct msghdr msg;
     struct cmsghdr *cmsg = NULL;
     char ancillary_buff[256] = {0};
@@ -78,6 +79,9 @@ sys_uds_readv(int fd, struct iovec *iov, size_t iov_len,
     }
 
     return res;
+#else
+    return -1;
+#endif
 }
 
 int
@@ -93,7 +97,7 @@ sys_uds_read(int fd, char *buff, size_t len,
 int
 sys_uds_writev(int fd, struct iovec *iov, size_t iov_len,
                int *fds, int fd_count, int flags) {
-
+#ifndef __OSv__
     struct msghdr msg;
     struct cmsghdr *cmsg = NULL;
     int res, i;
@@ -143,6 +147,9 @@ sys_uds_writev(int fd, struct iovec *iov, size_t iov_len,
     free(msg.msg_control);
 
     return res;
+#else
+    return -1;
+#endif
 }
 
 int

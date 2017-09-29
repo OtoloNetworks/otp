@@ -430,7 +430,7 @@ CS_EXECUTABLE = erl_child_setup$(TYPEMARKER)
 # ----------------------------------------------------------------------
 
 ifeq ($(ERLANG_OSTYPE), unix)
-ifeq ($(findstring rtems, $(TARGET)), rtems)
+ifeq ($(findstring osv, $(TARGET)), osv)
 UNIX_ONLY_BUILDS =
 else
 UNIX_ONLY_BUILDS =	$(BINDIR)/$(CS_EXECUTABLE)
@@ -504,9 +504,7 @@ release_spec: all
 	$(INSTALL_DATA) $(RELEASE_INCLUDES) "$(RELSYSDIR)/include"
 	$(INSTALL_PROGRAM) $(BINDIR)/$(EMULATOR_EXECUTABLE) "$(RELSYSDIR)/bin"
 ifeq ($(ERLANG_OSTYPE), unix)
-ifeq ($(findstring rtems, $(TARGET)), rtems)
-	$(INSTALL_PROGRAM) "$(RELSYSDIR)/bin"
-else
+ifneq ($(findstring osv, $(TARGET)), osv)
 	$(INSTALL_PROGRAM) $(BINDIR)/$(CS_EXECUTABLE) "$(RELSYSDIR)/bin"
 endif
 endif
@@ -738,7 +736,11 @@ $(OBJDIR)/%.o: nifs/common/%.c
 # ----------------------------------------------------------------------
 # Specials
 #
+ifeq ($(findstring osv,$(TARGET)),osv)
+CS_OBJ =
+else
 CS_OBJ = $(OBJDIR)/erl_child_setup.o $(OBJDIR)/sys_uds.o $(OBJDIR)/hash.o
+endif
 
 $(BINDIR)/$(CS_EXECUTABLE): $(TTF_DIR)/GENERATED $(PRELOAD_SRC) $(CS_OBJ) $(ERTS_LIB)
 	$(ld_verbose)$(CS_PURIFY) $(LD) $(CS_LDFLAGS) -o $(BINDIR)/$(CS_EXECUTABLE) \
