@@ -299,6 +299,12 @@ static Port *create_port(char *name,
     erts_aint32_t state = ERTS_PORT_SFLG_CONNECTED;
     erts_aint32_t x_pts_flgs = 0;
 
+#ifdef __OSv__
+    // Nasty hack...
+    if (driver->name && 0 == strcmp("spawn", driver->name))
+        return NULL;
+#endif
+
     if (!driver_lock) {
 	/* Align size for mutex following port struct */
 	port_size = size = ERTS_ALC_DATA_ALIGN_SIZE(sizeof(Port));
