@@ -316,6 +316,11 @@ static Port *create_port(char *name,
     erts_aint32_t state = ERTS_PORT_SFLG_CONNECTED;
     erts_aint32_t x_pts_flgs = 0;
 
+#ifdef __OSv__
+    // Nasty hack...
+    if (driver->name && 0 == strcmp("spawn", driver->name))
+        return NULL;
+#endif
 #ifdef ERTS_SMP
     ErtsRunQueue *runq;
     if (!driver_lock) {
