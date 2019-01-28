@@ -46,7 +46,7 @@
 -define(MIN_READLINE_SIZE, 256).
 -define(LARGEFILESIZE, (1 bsl 63)).
 
--export([copy/3]).
+-export([copy/3, start/0]).
 
 -include("file_int.hrl").
 
@@ -83,7 +83,23 @@ internal_normalize_utf8(_) ->
 is_translatable(_) ->
     erlang:nif_error(undefined).
 
-%%
+%% This is a janitor process used to close files whose controlling process has
+%% died. The emulator will be torn down if this is killed.
+start() ->
+    helper_loop().
+
+helper_loop() ->
+    receive
+        {close, FRef} when is_reference(FRef) -> delayed_close_nif(FRef);
+        _ -> ok
+    end,
+    helper_loop().
+
+on_load() ->
+    %% This is spawned as a system process to prevent init:restart/0 from
+    %% killing it.
+    Pid = erts_internal:spawn_system_process(?MODULE, start, []),
+    ok = erlang:load_nif(atom_to_list(?MODULE), Pid).
 
 %% Returns {error, Reason} | {ok, BytesCopied}
 copy(#file_descriptor{module = ?MODULE} = Source,
@@ -93,9 +109,6 @@ copy(#file_descriptor{module = ?MODULE} = Source,
        is_atom(Length) ->
     %% XXX Should be moved down to the driver for optimization.
     file:copy_opened(Source, Dest, Length).
-
-on_load() ->
-    ok = erlang:load_nif(atom_to_list(?MODULE), 0).
 
 open(Name, Modes) ->
     %% The try/catch pattern seen here is used throughout the file to adhere to
@@ -482,6 +495,8 @@ truncate_nif(_FileRef) ->
     erlang:nif_error(undef).
 get_handle_nif(_FileRef) ->
     erlang:nif_error(undef).
+delayed_close_nif(_FileRef) ->
+    erlang:nif_error(undef).
 
 %%
 %% Quality-of-life helpers
@@ -786,7 +801,7 @@ altname_nif(_Path) ->
 
 %% We know for certain that lists:reverse/2 is a BIF, so it's safe to use it
 %% even though this module is preloaded.
-reverse_list(List) -> lists:reverse(List).
+reverse_list(List) -> lists:reverse(List, []).
 
 proplist_get_value(_Key, [], Default) ->
     Default;

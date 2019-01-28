@@ -224,10 +224,12 @@ transform_from_shell(Dialect, Clauses, BoundEnvironment) ->
 %% Called when translating during compiling
 %%
 
--spec parse_transform(Forms, Options) -> Forms2 when
+-spec parse_transform(Forms, Options) -> Forms2 | Errors | Warnings when
       Forms :: [erl_parse:abstract_form() | erl_parse:form_info()],
       Forms2 :: [erl_parse:abstract_form() | erl_parse:form_info()],
-      Options :: term().
+      Options :: term(),
+      Errors :: {error, ErrInfo :: [tuple()], WarnInfo :: []},
+      Warnings :: {warning, Forms2, WarnInfo :: [tuple()]}.
 
 parse_transform(Forms, _Options) ->
     SaveFilename = setup_filename(),
@@ -944,6 +946,7 @@ real_guard_function(node,0) -> true;
 real_guard_function(node,1) -> true;
 real_guard_function(round,1) -> true;
 real_guard_function(size,1) -> true;
+real_guard_function(bit_size,1) -> true;
 real_guard_function(map_size,1) -> true;
 real_guard_function(map_get,2) -> true;
 real_guard_function(tl,1) -> true;

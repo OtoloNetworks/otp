@@ -33,25 +33,102 @@
     <file>notes.xml</file>
   </header>
   
-  <section><title>Inets 7.0.1</title>
+  <section><title>Inets 7.0.4</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>
       <list>
         <item>
           <p>
-	    Change status code for no mod found to handle request to
-	    501</p>
+	    Make sure ipv6 addresses with brackets in URIs are
+	    converted correctly before passing to lower level
+	    functions like gen_tcp and ssl functions. Could cause
+	    connection to fail.</p>
           <p>
-	    Own Id: OTP-15215</p>
+	    Own Id: OTP-15544 Aux Id: ERIERL-289 </p>
         </item>
       </list>
     </section>
 
 </section>
 
-<section><title>Inets 7.0</title>
+<section><title>Inets 7.0.3</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fixed http client to not send 'content-length' header in
+	    chunked encoded requests.</p>
+          <p>
+	    Own Id: OTP-15338 Aux Id: ERL-733 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed http client to not drop explicit 'Content-Type'
+	    header in requests without a body such as requests with
+	    the 'Content-Type' of application/x-www-form-urlencoded.</p>
+          <p>
+	    Own Id: OTP-15339 Aux Id: ERL-736 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Inets 7.0.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Enhance error handling, that is mod_get will return 403
+	    if a path is a directory and not a file.</p>
+          <p>
+	    Own Id: OTP-15192</p>
+        </item>
+        <item>
+          <p>
+	    Do not use chunked-encoding with 1xx, 204 and 304
+	    responses when using mod_esi. Old behavior was not
+	    compliant with HTTP/1.1 RFC and could cause clients to
+	    hang when they received 1xx, 204 or 304 responses that
+	    included an empty chunked-encoded body.</p>
+          <p>
+	    Own Id: OTP-15241</p>
+        </item>
+        <item>
+          <p>
+	    Add robust handling of chunked-encoded HTTP responses
+	    with an empty body (1xx, 204, 304). Old behavior could
+	    cause the client to hang when connecting to a faulty
+	    server implementation.</p>
+          <p>
+	    Own Id: OTP-15242</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Inets 7.0.1</title>
+
+  <section><title>Fixed Bugs and Malfunctions</title>
+  <list>
+    <item>
+      <p>
+	Change status code for no mod found to handle request to
+      501</p>
+      <p>
+      Own Id: OTP-15215</p>
+        </item>
+  </list>
+  </section>
+
+  </section>
+
+  <section><title>Inets 7.0</title>
+
+  <section><title>Fixed Bugs and Malfunctions</title>
       <list>
         <item>
           <p>
@@ -95,7 +172,6 @@
       </list>
     </section>
 
-
     <section><title>Improvements and New Features</title>
       <list>
         <item>
@@ -107,7 +183,85 @@
       </list>
     </section>
 
+  </section>
+
+  <section><title>Inets 6.5.2.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Do not use chunked-encoding with 1xx, 204 and 304
+	    responses when using mod_esi. Old behavior was not
+	    compliant with HTTP/1.1 RFC and could cause clients to
+	    hang when they received 1xx, 204 or 304 responses that
+	    included an empty chunked-encoded body.</p>
+          <p>
+	    Own Id: OTP-15241</p>
+        </item>
+        <item>
+          <p>
+	    Add robust handling of chunked-encoded HTTP responses
+	    with an empty body (1xx, 204, 304). Old behavior could
+	    cause the client to hang when connecting to a faulty
+	    server implementation.</p>
+          <p>
+	    Own Id: OTP-15242</p>
+        </item>
+      </list>
+    </section>
+
+  </section>
+  
+  <section><title>Inets 6.5.2.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Change status code for no mod found to handle request to
+	    501</p>
+          <p>
+	    Own Id: OTP-15215</p>
+        </item>
+      </list>
+    </section>
+
 </section>
+
+<section><title>Inets 6.5.2.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Enhance error handling, that is mod_get will return 403
+	    if a path is a directory and not a file.</p>
+          <p>
+	    Own Id: OTP-15192</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+  <section><title>Inets 6.5.2.1</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Options added for setting low-level properties on the
+	    underlying TCP connections. The options are:
+	    <c>sock_ctrl</c>, <c>sock_data_act</c> and
+	    <c>sock_data_pass</c>. See the manual for details.</p>
+          <p>
+	    Own Id: OTP-15120 Aux Id: ERIERL-192 </p>
+        </item>
+      </list>
+    </section>
+
+  </section>
 
 <section><title>Inets 6.5.2</title>
 

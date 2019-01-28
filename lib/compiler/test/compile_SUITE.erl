@@ -36,7 +36,7 @@
 	 core_roundtrip/1, asm/1, optimized_guards/1,
 	 sys_pre_attributes/1, dialyzer/1,
 	 warnings/1, pre_load_check/1, env_compiler_options/1,
-         bc_options/1, deterministic_include/1
+         bc_options/1, deterministic_include/1, deterministic_paths/1
 	]).
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
@@ -46,7 +46,6 @@ suite() -> [{ct_hooks,[ts_install_cth]}].
 -spec all() -> all_return_type().
 
 all() -> 
-    test_lib:recompile(?MODULE),
     [app_test, appup_test, file_1, forms_2, module_mismatch, big_file, outdir,
      binary, makedep, cond_and_ifdef, listings, listings_big,
      other_output, kernel_listing, encrypted_abstr, tuple_calls,
@@ -54,12 +53,13 @@ all() ->
      cover, env, core_pp, core_roundtrip, asm, optimized_guards,
      sys_pre_attributes, dialyzer, warnings, pre_load_check,
      env_compiler_options, custom_debug_info, bc_options,
-     custom_compile_info, deterministic_include].
+     custom_compile_info, deterministic_include, deterministic_paths].
 
 groups() -> 
     [].
 
 init_per_suite(Config) ->
+    test_lib:recompile(?MODULE),
     Config.
 
 end_per_suite(_Config) ->
@@ -1530,6 +1530,30 @@ deterministic_include(Config) when is_list(Config) ->
     true = DetC =:= DetD,
 
     ok.
+
+deterministic_paths(Config) when is_list(Config) ->
+    DataDir = proplists:get_value(data_dir, Config),
+
+    %% Files without +deterministic should differ if they were compiled from a
+    %% different directory.
+    true = deterministic_paths_1(DataDir, "simple", []),
+
+    %% ... but files with +deterministic shouldn't.
+    false = deterministic_paths_1(DataDir, "simple", [deterministic]),
+
+    ok.
+
+deterministic_paths_1(DataDir, Name, Opts) ->
+    Simple = filename:join(DataDir, "simple"),
+    {ok, Cwd} = file:get_cwd(),
+    try
+        {ok,_,A} = compile:file(Simple, [binary | Opts]),
+        ok = file:set_cwd(DataDir),
+        {ok,_,B} = compile:file(Name, [binary | Opts]),
+        A =/= B
+    after
+        file:set_cwd(Cwd)
+    end.
 
 %%%
 %%% Utilities.

@@ -2063,7 +2063,7 @@ do_send(Process *p, Eterm to, Eterm msg, Eterm *refp, ErtsSendContext *ctx)
 	if (p == rp)
 	    rp_locks |= ERTS_PROC_LOCK_MAIN;
 	/* send to local process */
-	erts_send_message(p, rp, &rp_locks, msg, 0);
+	erts_send_message(p, rp, &rp_locks, msg);
 	erts_proc_unlock(rp,
 			     p == rp
 			     ? (rp_locks & ~ERTS_PROC_LOCK_MAIN)
@@ -3622,6 +3622,10 @@ erts_internal_garbage_collect_1(BIF_ALIST_1)
     default:        BIF_ERROR(BIF_P, BADARG);
     }
     erts_garbage_collect(BIF_P, 0, NULL, 0);
+    if (ERTS_PROC_IS_EXITING(BIF_P)) {
+        /* The max heap size limit was reached. */
+        return THE_NON_VALUE;
+    }
     return am_true;
 }
 

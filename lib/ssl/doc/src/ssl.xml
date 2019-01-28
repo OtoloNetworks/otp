@@ -199,14 +199,14 @@
        | sect163r1 | sect163r2 | secp160k1 | secp160r1 | secp160r2</c></p></item>
 
        <tag><c>hello_extensions() =</c></tag>
-       <item><p><c>#{renegotiation_info => 
+       <item><p><c>#{renegotiation_info => binary() | undefined,
                    signature_algs => [{hash(), ecsda| rsa| dsa}] | undefined
 		   alpn => binary() | undefined,
-		   next_protocol_negotiation,
+		   next_protocol_negotiation => binary() | undefined,
 		   srp => string() | undefined,
-		   ec_point_formats ,
-		   elliptic_curves = [oid] | undefined
-		   sni = string()} 
+		   ec_point_formats => list() | undefined,
+		   elliptic_curves => [oid] | undefined,
+		   sni => string() | undefined}
        }</c></p></item>
       
 
@@ -1066,7 +1066,7 @@ fun(srp, Username :: string(), UserState :: term()) ->
       </fsummary>
       <type>
 	<v>SslSocket = sslsocket()</v>
-        <v>Item = protocol | cipher_suite | sni_hostname | ecc | session_id | atom()</v>
+        <v>Item = protocol | selected_cipher_suite | sni_hostname | ecc | session_id | atom()</v>
 	<d>Meaningful atoms, not specified above, are the ssl option names.</d>
 	<v>Result = [{Item::atom(), Value::term()}]</v>
         <v>Reason = term()</v>
@@ -1074,6 +1074,9 @@ fun(srp, Username :: string(), UserState :: term()) ->
       <desc><p>Returns the most relevant information about the connection, ssl options that
       are undefined will be filtered out. Note that values that affect the security of the
       connection will only be returned if explicitly requested by connection_information/2.</p>
+      <note><p>The legacy <c>Item = cipher_suite</c> is still supported
+        and returns the cipher suite on its (undocumented) legacy format.
+        It should be replaced by <c>selected_cipher_suite</c>.</p></note>
       </desc>
     </func>
 
@@ -1513,9 +1516,9 @@ fun(srp, Username :: string(), UserState :: term()) ->
 	to complete handshaking, that is,
 	establishing the SSL/TLS/DTLS connection.</p>
         <warning>
-          <p>The socket returned can only be used with
-	  <seealso marker="#handshake-2"> handshake/[2,3]</seealso>.
-	  No traffic can be sent or received before that call.</p>
+          <p>Most API functions require that the TLS/DTLS 
+          connection is established to work as expected.
+	  </p>
         </warning>
         <p>The accepted socket inherits the options set for
 	<c>ListenSocket</c> in

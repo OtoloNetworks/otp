@@ -74,8 +74,8 @@ start() ->
                   type => worker,
                   modules => dynamic},
             case supervisor:start_child(logger_sup, ErrorLogger) of
-                {ok,_} ->
-                    ok;
+                {ok,Pid} ->
+                    ok = logger_handler_watcher:register_handler(?MODULE,Pid);
                 Error ->
                     Error
             end;
@@ -95,9 +95,14 @@ start_link() ->
 %%% Stop the event manager
 -spec stop() -> ok.
 stop() ->
-    _ = supervisor:terminate_child(logger_sup,?MODULE),
-    _ = supervisor:delete_child(logger_sup,?MODULE),
-    ok.
+    case whereis(?MODULE) of
+        undefined ->
+            ok;
+        _Pid ->
+            _ = gen_event:stop(?MODULE,{shutdown,stopped},infinity),
+            _ = supervisor:delete_child(logger_sup,?MODULE),
+            ok
+    end.
 
 %%%-----------------------------------------------------------------
 %%% Callbacks for logger
@@ -142,14 +147,27 @@ do_log(Level,{report,Msg},#{?MODULE:=#{tag:=Tag}}=Meta) ->
             _ ->
                 %% From logger call which added error_logger data to
                 %% obtain backwards compatibility with error_logger:*_msg/1,2
-                RCBFun=maps:get(report_cb,Meta,fun logger:format_report/1),
-                try RCBFun(Msg) of
-                    {F,A} when is_list(F), is_list(A) ->
-                        {F,A};
-                    Other ->
-                        {"REPORT_CB ERROR: ~tp; Returned: ~tp",[Msg,Other]}
-                catch C:R ->
-                        {"REPORT_CB CRASH: ~tp; Reason: ~tp",[Msg,{C,R}]}
+                case maps:get(report_cb,Meta,fun logger:format_report/1) of
+                    RCBFun when is_function(RCBFun,1) ->
+                        try RCBFun(Msg) of
+                            {F,A} when is_list(F), is_list(A) ->
+                                {F,A};
+                            Other ->
+                                {"REPORT_CB ERROR: ~tp; Returned: ~tp",[Msg,Other]}
+                        catch C:R ->
+                                {"REPORT_CB CRASH: ~tp; Reason: ~tp",[Msg,{C,R}]}
+                        end;
+                    RCBFun when is_function(RCBFun,2) ->
+                        try RCBFun(Msg,#{depth=>get_format_depth(),
+                                         chars_limit=>unlimited,
+                                         single_line=>false}) of
+                            Chardata when ?IS_STRING(Chardata) ->
+                                {"~ts",[Chardata]};
+                            Other ->
+                                {"REPORT_CB ERROR: ~tp; Returned: ~tp",[Msg,Other]}
+                        catch C:R ->
+                                {"REPORT_CB CRASH: ~tp; Reason: ~tp",[Msg,{C,R}]}
+                        end
                 end
         end,
     notify(Level,Tag,Format,Args,Meta);

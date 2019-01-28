@@ -168,6 +168,9 @@
 -type snmp_struct() :: [{atom(), snmp_type() | tuple_of(snmp_type())}].
 -type snmp_type() :: 'fix_string' | 'string' | 'integer'.
 -type tuple_of(_T) :: tuple().
+-type config_key() :: extra_db_nodes | dc_dump_limit.
+-type config_value() :: [node()] | number().
+-type config_result() :: {ok, config_value()} | {error, term()}.
 
 -define(DEFAULT_ACCESS, ?MODULE).
 
@@ -278,7 +281,8 @@ stop() ->
 	Other -> Other
     end.
 
--spec change_config(Config::atom(), Value::_) -> ok | {error, term()}.
+-spec change_config(Config::config_key(), Value::config_value()) ->
+	  config_result().
 change_config(extra_db_nodes, Ns) when is_list(Ns) ->
     mnesia_controller:connect_nodes(Ns);
 change_config(dc_dump_limit, N) when is_number(N), N > 0 ->
@@ -779,12 +783,16 @@ do_delete_object(Tid, Ts, Tab, Val, LockKind) ->
 		      ?ets_insert(Store, {Oid, Val, delete_object});
 		  _ ->
 		      case ?ets_match_object(Store, {Oid, '_', write}) of
-			  [] ->
-			      ?ets_match_delete(Store, {Oid, Val, '_'}),
-			      ?ets_insert(Store, {Oid, Val, delete_object});
-			  _  ->
-			      ?ets_delete(Store, Oid),
-			      ?ets_insert(Store, {Oid, Oid, delete})
+			      [] ->
+			          ?ets_match_delete(Store, {Oid, Val, '_'}),
+			          ?ets_insert(Store, {Oid, Val, delete_object});
+			      Ops  ->
+			          case lists:member({Oid, Val, write}, Ops) of
+			              true ->
+			                  ?ets_delete(Store, Oid),
+			                  ?ets_insert(Store, {Oid, Oid, delete});
+			              false -> ok
+			          end
 		      end
 	      end,
 	      ok;

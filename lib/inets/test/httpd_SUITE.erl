@@ -120,7 +120,7 @@ groups() ->
 		   disturbing_0_9,
 		   reload_config_file
 		  ]},
-     {post, [], [chunked_post, chunked_chunked_encoded_post]},
+     {post, [], [chunked_post, chunked_chunked_encoded_post, post_204]},
      {basic_auth, [], [basic_auth_1_1, basic_auth_1_0, basic_auth_0_9]},
      {auth_api, [], [auth_api_1_1, auth_api_1_0, auth_api_0_9
 		    ]},
@@ -457,8 +457,19 @@ get(Config) when is_list(Config) ->
 					{header, "Content-Type", "text/html"},
 					{header, "Date"},
 					{header, "Server"},
+					{version, Version}]),
+    
+    ok = httpd_test_lib:verify_request(proplists:get_value(type, Config), Host, 
+				       proplists:get_value(port, Config),  
+				       transport_opts(Type, Config),
+				       proplists:get_value(node, Config),
+				       http_request("GET /open/ ", Version, Host),
+				       [{statuscode, 403},
+					{header, "Content-Type", "text/html"},
+					{header, "Date"},
+					{header, "Server"},
 					{version, Version}]).
-
+    
 basic_auth_1_1(Config) when is_list(Config) -> 
     basic_auth([{http_version, "HTTP/1.1"} | Config]).
 
@@ -742,6 +753,42 @@ chunked_chunked_encoded_post(Config) when is_list(Config) ->
                      [{http_version, "HTTP/1.1"} | Config], 
                      [{statuscode, 200}]).
 
+%%-------------------------------------------------------------------------
+post_204() ->
+    [{doc,"Test that 204 responses are not chunk encoded"}].
+post_204(Config) ->
+    Host = proplists:get_value(host, Config),
+    Port =  proplists:get_value(port, Config),
+    SockType = proplists:get_value(type, Config),
+    TranspOpts = transport_opts(SockType, Config),
+    Request = "POST /cgi-bin/erl/httpd_example:post_204 ",
+
+    try inets_test_lib:connect_bin(SockType, Host, Port, TranspOpts) of
+	{ok, Socket} ->
+            RequestStr = http_request(Request, "HTTP/1.1", Host),
+	    ok = inets_test_lib:send(SockType, Socket, RequestStr),
+            receive
+                {tcp, Socket, Data} ->
+                    case binary:match(Data, <<"chunked">>,[]) of
+                        nomatch ->
+                            ok;
+                        {_, _} ->
+                            ct:fail("Chunked encoding detected.")
+                    end
+            after 2000 ->
+                    ct:fail(connection_timed_out)
+            end;
+	ConnectError ->
+	    ct:fail({connect_error, ConnectError,
+		     [SockType, Host, Port, TranspOpts]})
+    catch
+	T:E ->
+	    ct:fail({connect_failure,
+		     [{type,       T},
+		      {error,      E},
+		      {stacktrace, erlang:get_stacktrace()},
+		      {args,       [SockType, Host, Port, TranspOpts]}]})
+    end.
 
 %%-------------------------------------------------------------------------
 htaccess_1_1(Config) when is_list(Config) -> 
@@ -2035,7 +2082,8 @@ head_status(_) ->
 
 basic_conf() ->
     [{modules, [mod_alias, mod_range, mod_responsecontrol,
-		mod_trace, mod_esi, mod_cgi, mod_dir, mod_get, mod_head]}].
+		mod_trace, mod_esi, mod_cgi, mod_get, mod_head]}].
+
 not_sup_conf() ->
      [{modules, [mod_get]}].
 

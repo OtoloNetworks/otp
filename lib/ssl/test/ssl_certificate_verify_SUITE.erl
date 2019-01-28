@@ -88,7 +88,8 @@ tests() ->
      critical_extension_verify_client,
      critical_extension_verify_server,
      critical_extension_verify_none,
-     customize_hostname_check
+     customize_hostname_check,
+     incomplete_chain
     ].
 
 error_handling_tests()->
@@ -619,8 +620,8 @@ cert_expired(Config) when is_list(Config) ->
 					      {from, self()},
 					      {options, [{verify, verify_peer}, {active, Active}  | ClientOpts]}]),    
     
-    tcp_delivery_workaround(Server, {error, {tls_alert, "certificate expired"}},
-			    Client, {error, {tls_alert, "certificate expired"}}).
+    ssl_test_lib:check_result(Server, {error, {tls_alert, "certificate expired"}},
+                              Client, {error, {tls_alert, "certificate expired"}}).
 
 two_digits_str(N) when N < 10 ->
     lists:flatten(io_lib:format("0~p", [N]));
@@ -728,8 +729,8 @@ critical_extension_verify_server(Config) when is_list(Config) ->
     %% This certificate has a critical extension that we don't
     %% understand.  Therefore, verification should fail.      
 
-    tcp_delivery_workaround(Server, {error, {tls_alert, "unsupported certificate"}},
-			    Client, {error, {tls_alert, "unsupported certificate"}}),
+    ssl_test_lib:check_result(Server, {error, {tls_alert, "unsupported certificate"}},
+                              Client, {error, {tls_alert, "unsupported certificate"}}),
     
     ssl_test_lib:close(Server).
 %%--------------------------------------------------------------------
@@ -908,8 +909,8 @@ invalid_signature_server(Config) when is_list(Config) ->
 					      {from, self()},
 					      {options, [{verify, verify_peer} | ClientOpts]}]),
 
-    tcp_delivery_workaround(Server, {error, {tls_alert, "unknown ca"}},
-			    Client, {error, {tls_alert, "unknown ca"}}).
+    ssl_test_lib:check_result(Server, {error, {tls_alert, "unknown ca"}},
+                              Client, {error, {tls_alert, "unknown ca"}}).
 
 %%--------------------------------------------------------------------
 
@@ -945,8 +946,8 @@ invalid_signature_client(Config) when is_list(Config) ->
 					      {from, self()},
 					      {options, NewClientOpts}]),
 
-    tcp_delivery_workaround(Server, {error, {tls_alert, "unknown ca"}},
-			    Client, {error, {tls_alert, "unknown ca"}}).
+    ssl_test_lib:check_result(Server, {error, {tls_alert, "unknown ca"}},
+                              Client, {error, {tls_alert, "unknown ca"}}).
 
 
 %%--------------------------------------------------------------------
@@ -1198,45 +1199,40 @@ customize_hostname_check(Config) when is_list(Config) ->
     ssl_test_lib:close(Server),
     ssl_test_lib:close(Client).
 
+incomplete_chain() ->
+    [{doc,"Test option verify_peer"}].
+incomplete_chain(Config) when is_list(Config) ->
+    DefConf = ssl_test_lib:default_cert_chain_conf(),
+    CertChainConf = ssl_test_lib:gen_conf(rsa, rsa, DefConf, DefConf),
+    #{server_config := ServerConf,
+      client_config := ClientConf} = public_key:pkix_test_data(CertChainConf),
+    [ServerRoot| _] = ServerCas = proplists:get_value(cacerts, ServerConf),
+    ClientCas = proplists:get_value(cacerts, ClientConf),
+
+    Active = proplists:get_value(active, Config),
+    ReceiveFunction =  proplists:get_value(receive_function, Config),
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+    Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
+					{from, self()},
+                                        {mfa, {ssl_test_lib, ReceiveFunction, []}},
+                                        {options, [{active, Active}, {verify, verify_peer},
+                                                   {cacerts, [ServerRoot]} |  
+                                                   proplists:delete(cacerts, ServerConf)]}]),
+    Port  = ssl_test_lib:inet_port(Server),
+    Client = ssl_test_lib:start_client([{node, ClientNode}, {port, Port},
+					{host, Hostname},
+                                        {from, self()},
+                                        {mfa, {ssl_test_lib, ReceiveFunction, []}},
+                                        {options, [{active, Active}, 
+                                                   {verify, verify_peer},
+                                                   {cacerts,  ServerCas ++ ClientCas} | 
+                                                   proplists:delete(cacerts, ClientConf)]}]),
+    ssl_test_lib:check_result(Server, ok, Client, ok),
+    ssl_test_lib:close(Server),
+    ssl_test_lib:close(Client).
+
+
 %%--------------------------------------------------------------------
 %% Internal functions ------------------------------------------------
 %%--------------------------------------------------------------------
 
-tcp_delivery_workaround(Server, ServerMsg, Client, ClientMsg) ->
-    receive
-	{Server, ServerMsg} ->
-	    client_msg(Client, ClientMsg);
-	{Client, ClientMsg} ->
-	    server_msg(Server, ServerMsg);
-	{Client, {error,closed}} ->
-	    server_msg(Server, ServerMsg);
-	{Server, {error,closed}} ->
-	    client_msg(Client, ClientMsg)
-    end.
-
-client_msg(Client, ClientMsg) ->
-    receive
-	{Client, ClientMsg} ->
-	    ok;
-	{Client, {error,closed}} ->
-	    ct:log("client got close"),
-	    ok;
-	{Client, {error, Reason}} ->
-	    ct:log("client got econnaborted: ~p", [Reason]),
-	    ok;
-	Unexpected ->
-	    ct:fail(Unexpected)
-    end.
-server_msg(Server, ServerMsg) ->
-    receive
-	{Server, ServerMsg} ->
-	    ok;
-	{Server, {error,closed}} ->
-	    ct:log("server got close"),
-	    ok;
-	{Server, {error, Reason}} ->
-	    ct:log("server got econnaborted: ~p", [Reason]),
-	    ok;
-	Unexpected ->
-	    ct:fail(Unexpected)
-    end.

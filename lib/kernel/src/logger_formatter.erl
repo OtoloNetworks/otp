@@ -26,16 +26,16 @@
 
 %%%-----------------------------------------------------------------
 %%% Types
--type config() :: #{chars_limit=>pos_integer()| unlimited,
-                    depth=>pos_integer() | unlimited,
-                    legacy_header=>boolean(),
-                    max_size=>pos_integer() | unlimited,
-                    report_cb=>fun((logger:report()) -> {io:format(),[term()]}),
-                    single_line=>boolean(),
-                    template=>template(),
-                    time_designator=>byte(),
-                    time_offset=>integer()|[byte()]}.
--type template() :: [metakey()|{metakey(),template(),template()}|string()].
+-type config() :: #{chars_limit     => pos_integer() | unlimited,
+                    depth           => pos_integer() | unlimited,
+                    legacy_header   => boolean(),
+                    max_size        => pos_integer() | unlimited,
+                    report_cb       => logger:report_cb(),
+                    single_line     => boolean(),
+                    template        => template(),
+                    time_designator => byte(),
+                    time_offset     => integer() | [byte()]}.
+-type template() :: [metakey() | {metakey(),template(),template()} | string()].
 -type metakey() :: atom() | [atom()].
 
 %%%-----------------------------------------------------------------
@@ -76,14 +76,14 @@ format(#{level:=Level,msg:=Msg0,meta:=Meta},Config0)
                         %% Trim leading and trailing whitespaces, and replace
                         %% newlines with ", "
                         re:replace(string:trim(MsgStr0),",?\r?\n\s*",", ",
-                                   [{return,list},global]);
+                                   [{return,list},global,unicode]);
                     _false ->
                         MsgStr0
                 end;
            true ->
                 ""
         end,
-    truncate(B ++ MsgStr ++ A,maps:get(max_size,Config)).
+    truncate([B,MsgStr,A],maps:get(max_size,Config)).
 
 do_format(Level,Data,[level|Format],Config) ->
     [to_string(level,Level,Config)|do_format(Level,Data,Format,Config)];
@@ -119,77 +119,125 @@ value(_,_) ->
 
 to_string(time,Time,Config) ->
     format_time(Time,Config);
-to_string(mfa,MFA,_Config) ->
-    format_mfa(MFA);
-to_string(_,Value,_Config) ->
-    to_string(Value).
+to_string(mfa,MFA,Config) ->
+    format_mfa(MFA,Config);
+to_string(_,Value,Config) ->
+    to_string(Value,Config).
 
-to_string(X) when is_atom(X) ->
+to_string(X,_) when is_atom(X) ->
     atom_to_list(X);
-to_string(X) when is_integer(X) ->
+to_string(X,_) when is_integer(X) ->
     integer_to_list(X);
-to_string(X) when is_pid(X) ->
+to_string(X,_) when is_pid(X) ->
     pid_to_list(X);
-to_string(X) when is_reference(X) ->
+to_string(X,_) when is_reference(X) ->
     ref_to_list(X);
-to_string(X) when is_list(X) ->
-    case io_lib:printable_unicode_list(lists:flatten(X)) of
+to_string(X,Config) when is_list(X) ->
+    case printable_list(lists:flatten(X)) of
         true -> X;
-        _ -> io_lib:format("~tp",[X])
+        _ -> io_lib:format(p(Config),[X])
     end;
-to_string(X) ->
-    io_lib:format("~tp",[X]).
+to_string(X,Config) ->
+    io_lib:format(p(Config),[X]).
+
+printable_list([]) ->
+    false;
+printable_list(X) ->
+    io_lib:printable_list(X).
 
 format_msg({string,Chardata},Meta,Config) ->
     format_msg({"~ts",[Chardata]},Meta,Config);
-format_msg({report,_}=Msg,Meta,#{report_cb:=Fun}=Config) when is_function(Fun,1) ->
+format_msg({report,_}=Msg,Meta,#{report_cb:=Fun}=Config)
+  when is_function(Fun,1); is_function(Fun,2) ->
     format_msg(Msg,Meta#{report_cb=>Fun},maps:remove(report_cb,Config));
 format_msg({report,Report},#{report_cb:=Fun}=Meta,Config) when is_function(Fun,1) ->
     try Fun(Report) of
         {Format,Args} when is_list(Format), is_list(Args) ->
             format_msg({Format,Args},maps:remove(report_cb,Meta),Config);
         Other ->
-            format_msg({"REPORT_CB ERROR: ~tp; Returned: ~tp",
+            P = p(Config),
+            format_msg({"REPORT_CB/1 ERROR: "++P++"; Returned: "++P,
                         [Report,Other]},Meta,Config)
-    catch C:R ->
-            format_msg({"REPORT_CB CRASH: ~tp; Reason: ~tp",
-                        [Report,{C,R}]},Meta,Config)
+    catch C:R:S ->
+            P = p(Config),
+            format_msg({"REPORT_CB/1 CRASH: "++P++"; Reason: "++P,
+                        [Report,{C,R,logger:filter_stacktrace(?MODULE,S)}]},
+                       Meta,Config)
+    end;
+format_msg({report,Report},#{report_cb:=Fun}=Meta,Config) when is_function(Fun,2) ->
+    try Fun(Report,maps:with([depth,chars_limit,single_line],Config)) of
+        Chardata when ?IS_STRING(Chardata) ->
+            try chardata_to_list(Chardata) % already size limited by report_cb
+            catch _:_ ->
+                    P = p(Config),
+                    format_msg({"REPORT_CB/2 ERROR: "++P++"; Returned: "++P,
+                                [Report,Chardata]},Meta,Config)
+            end;
+        Other ->
+            P = p(Config),
+            format_msg({"REPORT_CB/2 ERROR: "++P++"; Returned: "++P,
+                        [Report,Other]},Meta,Config)
+    catch C:R:S ->
+            P = p(Config),
+            format_msg({"REPORT_CB/2 CRASH: "++P++"; Reason: "++P,
+                        [Report,{C,R,logger:filter_stacktrace(?MODULE,S)}]},
+                       Meta,Config)
     end;
 format_msg({report,Report},Meta,Config) ->
     format_msg({report,Report},
                Meta#{report_cb=>fun logger:format_report/1},
                Config);
-format_msg(Msg,_Meta,#{depth:=Depth,chars_limit:=CharsLimit}) ->
-    limit_size(Msg, Depth, CharsLimit).
+format_msg(Msg,_Meta,#{depth:=Depth,chars_limit:=CharsLimit,
+                       single_line:=Single}) ->
+    Opts = chars_limit_to_opts(CharsLimit),
+    format_msg(Msg, Depth, Opts, Single).
 
-limit_size(Msg,Depth,unlimited) ->
-    limit_size(Msg,Depth,[]);
-limit_size(Msg,Depth,CharsLimit) when is_integer(CharsLimit) ->
-    limit_size(Msg,Depth,[{chars_limit,CharsLimit}]);
-limit_size({Format,Args},unlimited,Opts) when is_list(Opts) ->
-    try io_lib:format(Format,Args,Opts)
-    catch _:_ ->
-            io_lib:format("FORMAT ERROR: ~tp - ~tp",[Format,Args],Opts)
-    end;
-limit_size({Format0,Args},Depth,Opts) when is_integer(Depth) ->
+chars_limit_to_opts(unlimited) -> [];
+chars_limit_to_opts(CharsLimit) -> [{chars_limit,CharsLimit}].
+
+format_msg({Format0,Args},Depth,Opts,Single) ->
     try
         Format1 = io_lib:scan_format(Format0, Args),
-        Format = limit_format(Format1, Depth),
+        Format = reformat(Format1, Depth, Single),
         io_lib:build_text(Format,Opts)
-    catch _:_ ->
-            limit_size({"FORMAT ERROR: ~tp - ~tp",[Format0,Args]},Depth,Opts)
+    catch C:R:S ->
+            P = p(Single),
+            FormatError = "FORMAT ERROR: "++P++" - "++P,
+            case Format0 of
+                FormatError ->
+                    %% already been here - avoid failing cyclically
+                    erlang:raise(C,R,S);
+                _ ->
+                    format_msg({FormatError,[Format0,Args]},Depth,Opts,Single)
+            end
     end.
 
-limit_format([#{control_char:=C0}=M0|T], Depth) when C0 =:= $p;
-						     C0 =:= $w ->
-    C = C0 - ($a - $A),				%To uppercase.
-    #{args:=Args} = M0,
-    M = M0#{control_char:=C,args:=Args++[Depth]},
-    [M|limit_format(T, Depth)];
-limit_format([H|T], Depth) ->
-    [H|limit_format(T, Depth)];
-limit_format([], _) ->
+reformat(Format,unlimited,false) ->
+    Format;
+reformat([#{control_char:=C}=M|T], Depth, true) when C =:= $p ->
+    [limit_depth(M#{width => 0}, Depth)|reformat(T, Depth, true)];
+reformat([#{control_char:=C}=M|T], Depth, true) when C =:= $P ->
+    [M#{width => 0}|reformat(T, Depth, true)];
+reformat([#{control_char:=C}=M|T], Depth, Single) when C =:= $p; C =:= $w ->
+    [limit_depth(M, Depth)|reformat(T, Depth, Single)];
+reformat([H|T], Depth, Single) ->
+    [H|reformat(T, Depth, Single)];
+reformat([], _, _) ->
     [].
+
+limit_depth(M0, unlimited) ->
+    M0;
+limit_depth(#{control_char:=C0, args:=Args}=M0, Depth) ->
+    C = C0 - ($a - $A),				%To uppercase.
+    M0#{control_char:=C,args:=Args++[Depth]}.
+
+chardata_to_list(Chardata) ->
+    case unicode:characters_to_list(Chardata,unicode) of
+        List when is_list(List) ->
+            List;
+        Error ->
+            throw(Error)
+    end.
 
 truncate(String,unlimited) ->
     String;
@@ -225,12 +273,12 @@ timestamp_to_datetimemicro(SysTime,Config) when is_integer(SysTime) ->
         end,
     {Date,Time,Micro,UtcStr}.
 
-format_mfa({M,F,A}) when is_atom(M), is_atom(F), is_integer(A) ->
+format_mfa({M,F,A},_) when is_atom(M), is_atom(F), is_integer(A) ->
     atom_to_list(M)++":"++atom_to_list(F)++"/"++integer_to_list(A);
-format_mfa({M,F,A}) when is_atom(M), is_atom(F), is_list(A) ->
-    format_mfa({M,F,length(A)});
-format_mfa(MFA) ->
-    to_string(MFA).
+format_mfa({M,F,A},Config) when is_atom(M), is_atom(F), is_list(A) ->
+    format_mfa({M,F,length(A)},Config);
+format_mfa(MFA,Config) ->
+    to_string(MFA,Config).
 
 maybe_add_legacy_header(Level,
                         #{time:=Timestamp}=Meta,
@@ -280,10 +328,10 @@ month(12) -> "Dec".
 %% configuration map
 add_default_config(Config0) ->
     Default =
-        #{legacy_header=>false,
+        #{chars_limit=>unlimited,
           error_logger_notice_header=>info,
+          legacy_header=>false,
           single_line=>true,
-          chars_limit=>unlimited,
           time_designator=>$T},
     MaxSize = get_max_size(maps:get(max_size,Config0,undefined)),
     Depth = get_depth(maps:get(depth,Config0,undefined)),
@@ -369,7 +417,8 @@ do_check_config([{legacy_header,LH}|Config]) when is_boolean(LH) ->
 do_check_config([{error_logger_notice_header,ELNH}|Config]) when ELNH == info;
                                                                  ELNH == notice ->
     do_check_config(Config);
-do_check_config([{report_cb,RCB}|Config]) when is_function(RCB,1) ->
+do_check_config([{report_cb,RCB}|Config]) when is_function(RCB,1);
+                                               is_function(RCB,2) ->
     do_check_config(Config);
 do_check_config([{template,T}|Config]) ->
     case check_template(T) of
@@ -456,3 +505,10 @@ check_timezone(Tz) ->
     catch _:_ ->
             error
     end.
+
+p(#{single_line:=Single}) ->
+    p(Single);
+p(true) ->
+    "~0tp";
+p(false) ->
+    "~tp".

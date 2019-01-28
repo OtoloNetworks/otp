@@ -169,14 +169,14 @@ client_certificate_verify(OwnCert, MasterSecret, Version,
     end.
 
 %%--------------------------------------------------------------------
--spec certificate_request(ssl_cipher:cipher_suite(), db_handle(), 
+-spec certificate_request(ssl_cipher_format:cipher_suite(), db_handle(), 
 			  certdb_ref(),  #hash_sign_algos{}, ssl_record:ssl_version()) ->
 				 #certificate_request{}.
 %%
 %% Description: Creates a certificate_request message, called by the server.
 %%--------------------------------------------------------------------
 certificate_request(CipherSuite, CertDbHandle, CertDbRef, HashSigns, Version) ->
-    Types = certificate_types(ssl_cipher:suite_definition(CipherSuite), Version),
+    Types = certificate_types(ssl_cipher_format:suite_definition(CipherSuite), Version),
     Authorities = certificate_authorities(CertDbHandle, CertDbRef),
     #certificate_request{
 		    certificate_types = Types,
@@ -338,7 +338,7 @@ certify(#certificate{asn1_certificates = ASN1Certs}, CertDbHandle, CertDbRef,
         Opts, CRLDbHandle, Role, Host) ->    
 
     ServerName = server_name(Opts#ssl_options.server_name_indication, Host, Role),
-    [PeerCert | _] = ASN1Certs,       
+    [PeerCert | ChainCerts ] = ASN1Certs,       
     try
 	{TrustedCert, CertPath}  =
 	    ssl_certificate:trusted_cert_and_path(ASN1Certs, CertDbHandle, CertDbRef,  
@@ -347,14 +347,14 @@ certify(#certificate{asn1_certificates = ASN1Certs}, CertDbHandle, CertDbRef,
                                                          CertDbHandle, CertDbRef, ServerName,
                                                          Opts#ssl_options.customize_hostname_check,
                                                          Opts#ssl_options.crl_check, CRLDbHandle, CertPath),
-	case public_key:pkix_path_validation(TrustedCert,
-					     CertPath,
-					     [{max_path_length,  Opts#ssl_options.depth},
-					      {verify_fun, ValidationFunAndState}]) of
+        Options = [{max_path_length, Opts#ssl_options.depth},
+                   {verify_fun, ValidationFunAndState}],
+	case public_key:pkix_path_validation(TrustedCert, CertPath, Options) of
 	    {ok, {PublicKeyInfo,_}} ->
 		{PeerCert, PublicKeyInfo};
 	    {error, Reason} ->
-		path_validation_alert(Reason)
+		handle_path_validation_error(Reason, PeerCert, ChainCerts, Opts, Options, 
+                                             CertDbHandle, CertDbRef)
 	end
     catch
 	error:{badmatch,{asn1, Asn1Reason}} ->
@@ -363,7 +363,6 @@ certify(#certificate{asn1_certificates = ASN1Certs}, CertDbHandle, CertDbRef,
         error:OtherReason ->
             ?ALERT_REC(?FATAL, ?INTERNAL_ERROR, {unexpected_error, OtherReason})
     end.
-
 %%--------------------------------------------------------------------
 -spec certificate_verify(binary(), public_key_info(), ssl_record:ssl_version(), term(),
 			 binary(), ssl_handshake_history()) -> valid | #alert{}.
@@ -611,7 +610,7 @@ encode_hello_extensions([#ec_point_formats{ec_point_format_list = ECPointFormats
 				 ?UINT16(Len), ?BYTE(ListLen), ECPointFormatList/binary, Acc/binary>>);
 encode_hello_extensions([#srp{username = UserName} | Rest], Acc) ->
     SRPLen = byte_size(UserName),
-    Len = SRPLen + 2,
+    Len = SRPLen + 1,
     encode_hello_extensions(Rest, <<?UINT16(?SRP_EXT), ?UINT16(Len), ?BYTE(SRPLen),
 				    UserName/binary, Acc/binary>>);
 encode_hello_extensions([#hash_sign_algos{hash_sign_algos = HashSignAlgos} | Rest], Acc) ->
@@ -730,7 +729,7 @@ decode_hello_extensions(Extensions) ->
     dec_hello_extensions(Extensions, #hello_extensions{}).
 
 %%--------------------------------------------------------------------
--spec decode_server_key(binary(), ssl_cipher:key_algo(), ssl_record:ssl_version()) ->
+-spec decode_server_key(binary(), ssl_cipher_format:key_algo(), ssl_record:ssl_version()) ->
 			       #server_key_params{}.
 %%
 %% Description: Decode server_key data and return appropriate type
@@ -739,7 +738,7 @@ decode_server_key(ServerKey, Type, Version) ->
     dec_server_key(ServerKey, key_exchange_alg(Type), Version).
 
 %%--------------------------------------------------------------------
--spec decode_client_key(binary(), ssl_cipher:key_algo(), ssl_record:ssl_version()) ->
+-spec decode_client_key(binary(), ssl_cipher_format:key_algo(), ssl_record:ssl_version()) ->
 			    #encrypted_premaster_secret{}
 			    | #client_diffie_hellman_public{}
 			    | #client_ec_diffie_hellman_public{}
@@ -777,7 +776,7 @@ available_suites(ServerCert, UserSuites, Version, undefined, Curve) ->
     filter_unavailable_ecc_suites(Curve, Suites);
 available_suites(ServerCert, UserSuites, Version, HashSigns, Curve) ->
     Suites = available_suites(ServerCert, UserSuites, Version, undefined, Curve),
-    filter_hashsigns(Suites, [ssl_cipher:suite_definition(Suite) || Suite <- Suites], HashSigns, 
+    filter_hashsigns(Suites, [ssl_cipher_format:suite_definition(Suite) || Suite <- Suites], HashSigns, 
                      Version, []).
 
 available_signature_algs(undefined, _)  ->
@@ -859,22 +858,24 @@ premaster_secret(PublicDhKey, PrivateDhKey, #server_dh_params{dh_p = Prime, dh_g
     end;
 premaster_secret(#client_srp_public{srp_a = ClientPublicKey}, ServerKey, #srp_user{prime = Prime,
 										   verifier = Verifier}) ->
-    case crypto:compute_key(srp, ClientPublicKey, ServerKey, {host, [Verifier, Prime, '6a']}) of
-	error ->
-	    throw(?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER));
+    try crypto:compute_key(srp, ClientPublicKey, ServerKey, {host, [Verifier, Prime, '6a']}) of
 	PremasterSecret ->
 	    PremasterSecret
+    catch
+	error:_ ->
+	    throw(?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER))
     end;
 premaster_secret(#server_srp_params{srp_n = Prime, srp_g = Generator, srp_s = Salt, srp_b = Public},
 		 ClientKeys, {Username, Password}) ->
     case ssl_srp_primes:check_srp_params(Generator, Prime) of
 	ok ->
 	    DerivedKey = crypto:hash(sha, [Salt, crypto:hash(sha, [Username, <<$:>>, Password])]),
-	    case crypto:compute_key(srp, Public, ClientKeys, {user, [DerivedKey, Prime, Generator, '6a']}) of
-		error ->
-		    throw(?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER));
+	    try crypto:compute_key(srp, Public, ClientKeys, {user, [DerivedKey, Prime, Generator, '6a']}) of
 		PremasterSecret ->
 		    PremasterSecret
+            catch
+		error ->
+		    throw(?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER))
 	    end;
 	_ ->
 	    throw(?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER))
@@ -924,6 +925,13 @@ premaster_secret(EncSecret, #'RSAPrivateKey'{} = RSAPrivateKey) ->
     catch
 	_:_ ->
 	    throw(?ALERT_REC(?FATAL, ?DECRYPT_ERROR))
+    end;
+premaster_secret(EncSecret, #{algorithm := rsa} = Engine) ->
+    try crypto:private_decrypt(rsa, EncSecret, maps:remove(algorithm, Engine),
+				   [{rsa_pad, rsa_pkcs1_padding}])
+    catch
+	_:_ ->
+	    throw(?ALERT_REC(?FATAL, ?DECRYPT_ERROR))
     end.
 %%====================================================================
 %% Extensions handling
@@ -932,7 +940,7 @@ client_hello_extensions(Version, CipherSuites,
 			#ssl_options{signature_algs = SupportedHashSigns,
 				     eccs = SupportedECCs} = SslOpts, ConnectionStates, Renegotiation) ->
     {EcPointFormats, EllipticCurves} =
-	case advertises_ec_ciphers(lists:map(fun ssl_cipher:suite_definition/1, CipherSuites)) of
+	case advertises_ec_ciphers(lists:map(fun ssl_cipher_format:suite_definition/1, CipherSuites)) of
 	    true ->
 		client_ecc_extensions(SupportedECCs);
 	    false ->
@@ -1055,7 +1063,10 @@ select_curve(undefined, _, _) ->
 %%--------------------------------------------------------------------
 select_hashsign(_, _, KeyExAlgo, _, _Version) when KeyExAlgo == dh_anon;
                                                    KeyExAlgo == ecdh_anon;
-                                                   KeyExAlgo == srp_anon ->
+                                                   KeyExAlgo == srp_anon;
+                                                   KeyExAlgo == psk;
+                                                   KeyExAlgo == dhe_psk;
+                                                   KeyExAlgo == ecdhe_psk ->
     {null, anon};
 %% The signature_algorithms extension was introduced with TLS 1.2. Ignore it if we have
 %% negotiated a lower version.
@@ -1064,17 +1075,14 @@ select_hashsign(HashSigns, Cert, KeyExAlgo,
     select_hashsign(HashSigns, Cert, KeyExAlgo, tls_v1:default_signature_algs(Version), Version);
 select_hashsign(#hash_sign_algos{hash_sign_algos = HashSigns}, Cert, KeyExAlgo, SupportedHashSigns,
 		{Major, Minor}) when Major >= 3 andalso Minor >= 3 ->
-    #'OTPCertificate'{tbsCertificate = TBSCert,
-		      signatureAlgorithm =  {_,SignAlgo, _}} = public_key:pkix_decode_cert(Cert, otp),
+    #'OTPCertificate'{tbsCertificate = TBSCert} = public_key:pkix_decode_cert(Cert, otp),
     #'OTPSubjectPublicKeyInfo'{algorithm = {_, SubjAlgo, _}} = 
      	TBSCert#'OTPTBSCertificate'.subjectPublicKeyInfo,
 
-    Sign = sign_algo(SignAlgo),
     SubSign = sign_algo(SubjAlgo),
     
     case lists:filter(fun({_, S} = Algos) when S == SubSign ->
-			      is_acceptable_hash_sign(Algos, Sign,
-						      SubSign, KeyExAlgo, SupportedHashSigns);
+			      is_acceptable_hash_sign(Algos, KeyExAlgo, SupportedHashSigns);
 			 (_)  ->
 			      false
 		      end, HashSigns) of
@@ -1310,6 +1318,45 @@ apply_user_fun(Fun, OtpCert, ExtensionOrError, UserState0, SslState, _CertPath) 
 	    {unknown, {SslState, UserState}}
     end.
 
+handle_path_validation_error({bad_cert, unknown_ca} = Reason, PeerCert, Chain,  
+                             Opts, Options, CertDbHandle, CertsDbRef) ->
+    handle_incomplete_chain(PeerCert, Chain, Opts, Options, CertDbHandle, CertsDbRef, Reason);
+handle_path_validation_error({bad_cert, invalid_issuer} = Reason, PeerCert, Chain0, 
+			     Opts, Options, CertDbHandle, CertsDbRef) ->
+    case ssl_certificate:certificate_chain(PeerCert, CertDbHandle, CertsDbRef, Chain0) of
+	{ok, _, [PeerCert | Chain] = OrdedChain} when  Chain =/= Chain0 -> %% Chain appaears to be unorded 
+            {Trusted, Path} = ssl_certificate:trusted_cert_and_path(OrdedChain,
+                                                                    CertDbHandle, CertsDbRef,
+                                                                    Opts#ssl_options.partial_chain),
+            case public_key:pkix_path_validation(Trusted, Path, Options) of
+		{ok, {PublicKeyInfo,_}} ->
+		    {PeerCert, PublicKeyInfo};
+                {error, PathError} ->
+		    handle_path_validation_error(PathError, PeerCert, Path,
+                                                 Opts, Options, CertDbHandle, CertsDbRef)
+	    end;
+        _ ->
+            path_validation_alert(Reason)
+    end;
+handle_path_validation_error(Reason, _, _, _, _,_, _) ->
+    path_validation_alert(Reason).
+
+handle_incomplete_chain(PeerCert, Chain0, Opts, Options, CertDbHandle, CertsDbRef, PathError0) ->
+    case ssl_certificate:certificate_chain(PeerCert, CertDbHandle, CertsDbRef) of
+        {ok, _, [PeerCert | _] = Chain} when Chain =/= Chain0 -> %% Chain candidate found          
+            {Trusted, Path} = ssl_certificate:trusted_cert_and_path(Chain,
+                                                                    CertDbHandle, CertsDbRef,
+                                                                    Opts#ssl_options.partial_chain),
+            case public_key:pkix_path_validation(Trusted, Path, Options) of
+		{ok, {PublicKeyInfo,_}} ->
+		    {PeerCert, PublicKeyInfo};
+                {error, PathError} ->
+		    path_validation_alert(PathError)
+	    end;
+        _ ->
+            path_validation_alert(PathError0)
+    end.
+
 path_validation_alert({bad_cert, cert_expired}) ->
     ?ALERT_REC(?FATAL, ?CERTIFICATE_EXPIRED);
 path_validation_alert({bad_cert, invalid_issuer}) ->
@@ -1322,8 +1369,6 @@ path_validation_alert({bad_cert, unknown_critical_extension}) ->
     ?ALERT_REC(?FATAL, ?UNSUPPORTED_CERTIFICATE);
 path_validation_alert({bad_cert, {revoked, _}}) ->
     ?ALERT_REC(?FATAL, ?CERTIFICATE_REVOKED);
-%%path_validation_alert({bad_cert, revocation_status_undetermined}) ->
-%%   ?ALERT_REC(?FATAL, ?BAD_CERTIFICATE);
 path_validation_alert({bad_cert, {revocation_status_undetermined, Details}}) ->
     Alert = ?ALERT_REC(?FATAL, ?BAD_CERTIFICATE),
     Alert#alert{reason = Details};
@@ -1896,7 +1941,7 @@ dec_hello_extensions(<<?UINT16(?RENEGOTIATION_EXT), ?UINT16(Len), Info:Len/binar
 										RenegotiateInfo}});
 
 dec_hello_extensions(<<?UINT16(?SRP_EXT), ?UINT16(Len), ?BYTE(SRPLen), SRP:SRPLen/binary, Rest/binary>>, Acc)
-  when Len == SRPLen + 2 ->
+  when Len == SRPLen + 1 ->
     dec_hello_extensions(Rest,  Acc#hello_extensions{srp = #srp{username = SRP}});
 
 dec_hello_extensions(<<?UINT16(?SIGNATURE_ALGORITHMS_EXT), ?UINT16(Len),
@@ -1933,7 +1978,7 @@ dec_hello_extensions(<<?UINT16(?EC_POINT_FORMATS_EXT), ?UINT16(Len),
 									      ECPointFormats}});
 
 dec_hello_extensions(<<?UINT16(?SNI_EXT), ?UINT16(Len), Rest/binary>>, Acc) when Len == 0 ->
-    dec_hello_extensions(Rest, Acc#hello_extensions{sni = ""}); %% Server may send an empy SNI
+    dec_hello_extensions(Rest, Acc#hello_extensions{sni = #sni{hostname = ""}}); %% Server may send an empy SNI
 
 dec_hello_extensions(<<?UINT16(?SNI_EXT), ?UINT16(Len),
                 ExtData:Len/binary, Rest/binary>>, Acc) ->
@@ -2231,37 +2276,7 @@ sign_algo(Alg) ->
     {_, Sign} =public_key:pkix_sign_types(Alg),
     Sign.
 
-is_acceptable_hash_sign(Algos, _, _, KeyExAlgo, SupportedHashSigns) when 
-      KeyExAlgo == dh_dss;
-      KeyExAlgo == dh_rsa;
-      KeyExAlgo == ecdh_rsa;
-      KeyExAlgo == ecdh_ecdsa
-      ->
-    %% *dh_* could be called only *dh in TLS-1.2
-    is_acceptable_hash_sign(Algos, SupportedHashSigns); 
-is_acceptable_hash_sign(Algos, rsa, ecdsa, ecdhe_rsa, SupportedHashSigns) ->
-    is_acceptable_hash_sign(Algos, SupportedHashSigns); 
-is_acceptable_hash_sign({_, rsa} = Algos, rsa, _, dhe_rsa, SupportedHashSigns) ->
-    is_acceptable_hash_sign(Algos, SupportedHashSigns); 
-is_acceptable_hash_sign({_, rsa} = Algos, rsa, rsa, ecdhe_rsa, SupportedHashSigns) ->
-    is_acceptable_hash_sign(Algos, SupportedHashSigns); 
-is_acceptable_hash_sign({_, rsa} = Algos, rsa, rsa, rsa, SupportedHashSigns) ->
-    is_acceptable_hash_sign(Algos, SupportedHashSigns); 
-is_acceptable_hash_sign({_, rsa} = Algos, rsa, _, srp_rsa, SupportedHashSigns) ->
-    is_acceptable_hash_sign(Algos, SupportedHashSigns); 
-is_acceptable_hash_sign({_, rsa} = Algos, rsa, _, rsa_psk, SupportedHashSigns) ->
-    is_acceptable_hash_sign(Algos, SupportedHashSigns); 
-is_acceptable_hash_sign({_, dsa} = Algos, dsa, _, dhe_dss, SupportedHashSigns) ->
-    is_acceptable_hash_sign(Algos, SupportedHashSigns); 
-is_acceptable_hash_sign({_, dsa} = Algos, dsa, _, srp_dss, SupportedHashSigns) ->  
-    is_acceptable_hash_sign(Algos, SupportedHashSigns); 
-is_acceptable_hash_sign({_, ecdsa} = Algos, ecdsa, _, dhe_ecdsa, SupportedHashSigns) ->
-    is_acceptable_hash_sign(Algos, SupportedHashSigns); 
-is_acceptable_hash_sign({_, ecdsa} = Algos, ecdsa, ecdsa, ecdh_ecdsa, SupportedHashSigns) ->
-    is_acceptable_hash_sign(Algos, SupportedHashSigns); 
-is_acceptable_hash_sign({_, ecdsa} = Algos, ecdsa, ecdsa, ecdhe_ecdsa, SupportedHashSigns) ->
-    is_acceptable_hash_sign(Algos, SupportedHashSigns); 
-is_acceptable_hash_sign(_, _, _, KeyExAlgo, _) when 
+is_acceptable_hash_sign( _, KeyExAlgo, _) when 
       KeyExAlgo == psk;
       KeyExAlgo == dhe_psk;
       KeyExAlgo == ecdhe_psk;
@@ -2270,8 +2285,9 @@ is_acceptable_hash_sign(_, _, _, KeyExAlgo, _) when
       KeyExAlgo == ecdhe_anon     
       ->
     true; 
-is_acceptable_hash_sign(_,_,_,_,_) ->
-    false.					
+is_acceptable_hash_sign(Algos,_, SupportedHashSigns) -> 
+    is_acceptable_hash_sign(Algos, SupportedHashSigns).
+
 is_acceptable_hash_sign(Algos, SupportedHashSigns) ->
     lists:member(Algos, SupportedHashSigns).
 
@@ -2456,7 +2472,7 @@ handle_renegotiation_info(_RecordCB, ConnectionStates, SecureRenegotation) ->
 cert_curve(_, _, no_suite) ->
     {no_curve, no_suite};
 cert_curve(Cert, ECCCurve0, CipherSuite) ->
-    case ssl_cipher:suite_definition(CipherSuite) of
+    case ssl_cipher_format:suite_definition(CipherSuite) of
         #{key_exchange := Kex} when Kex == ecdh_ecdsa; 
                                     Kex == ecdh_rsa ->
             OtpCert = public_key:pkix_decode_cert(Cert, otp),
@@ -2464,13 +2480,7 @@ cert_curve(Cert, ECCCurve0, CipherSuite) ->
             #'OTPSubjectPublicKeyInfo'{algorithm = AlgInfo} 
                 = TBSCert#'OTPTBSCertificate'.subjectPublicKeyInfo,
             {namedCurve, Oid}  = AlgInfo#'PublicKeyAlgorithm'.parameters,
-            try pubkey_cert_records:namedCurves(Oid) of
-                Curve ->
-                    {{named_curve, Curve}, CipherSuite}
-            catch 
-                _:_ ->
-                    {no_curve, no_suite}
-            end;
+            {{namedCurve, Oid}, CipherSuite};
         _ ->
             {ECCCurve0, CipherSuite}
     end.

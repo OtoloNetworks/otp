@@ -667,7 +667,7 @@ print_op(fmtfn_t to, void *to_arg, int op, int size, BeamInstr* addr)
 	    ap++;
 	    break;
 	case 'l':		/* fr(N) */
-	    erts_print(to, to_arg, "fr(%d)", loader_reg_index(ap[0]));
+	    erts_print(to, to_arg, "fr(%d)", ap[0] / sizeof(FloatDef));
 	    ap++;
 	    break;
 	default:
@@ -1191,6 +1191,7 @@ dirty_send_message(Process *c_p, Eterm to, Eterm tag)
     mp = erts_alloc_message_heap(rp, &rp_locks, 3, &hp, &ohp);
 
     msg = TUPLE2(hp, tag, c_p->common.id);
+    ERL_MESSAGE_TOKEN(mp) = am_undefined;
     erts_queue_proc_message(c_p, rp, rp_locks, mp, msg);
 
     if (rp == real_c_p)

@@ -89,8 +89,9 @@ sys_uds_readv(int fd, struct iovec *iov, size_t iov_len,
     if((msg.msg_flags & MSG_CTRUNC) == MSG_CTRUNC)
     {
         /* We assume that we have given enough space for any header
-           that are sent to us. So the only remaining reason to get
-           this flag set is if the caller has run out of file descriptors.
+           that are sent to us. So the only remaining reasons to get
+           this flag set is if the caller has run out of file descriptors
+           or an SELinux policy prunes the response (eg. O_APPEND on STDERR).
         */
         errno = EMFILE;
         return -1;
@@ -136,7 +137,7 @@ sys_uds_writev(int fd, struct iovec *iov, size_t iov_len,
 #ifndef __OSv__
     struct msghdr msg;
     struct cmsghdr *cmsg = NULL;
-    int res, i;
+    int res, i, error;
 
     /* initialize socket message */
     memset(&msg, 0, sizeof(struct msghdr));
@@ -177,10 +178,21 @@ sys_uds_writev(int fd, struct iovec *iov, size_t iov_len,
 
     res = sendmsg(fd, &msg, flags);
 
+#ifdef ETOOMANYREFS
+    /* Linux may give ETOOMANYREFS when there are too many fds in transit.
+       We map this to EMFILE as bsd and other use this error code and we want
+       the behaviour to be the same on all OSs */
+    if (errno == ETOOMANYREFS)
+        errno = EMFILE;
+#endif
+    error = errno;
+
     if (iov_len > MAXIOV)
         free(iov[0].iov_base);
 
     free(msg.msg_control);
+
+    errno = error;
 
     return res;
 #else

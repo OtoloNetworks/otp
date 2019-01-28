@@ -60,6 +60,7 @@
 
 -define(CDR_MAGIC, "GIOP").
 -define(CDR_HDR_SIZE, 12).
+-define(INTERNAL_ACTIVE_N, 100).
 
 -define(DEFAULT_TIMEOUT, 5000).
 -define(NO_DIST_POINT, "http://dummy/no_distribution_point").
@@ -120,7 +121,7 @@
 	  %% undefined if not hibernating, or number of ms of
 	  %% inactivity after which ssl_connection will go into
 	  %% hibernation
-	  hibernate_after      :: timeout(),
+	  hibernate_after      :: timeout(),          
 	  %% This option should only be set to true by inet_tls_dist
 	  erl_dist = false     :: boolean(),
           alpn_advertised_protocols = undefined :: [binary()] | undefined ,

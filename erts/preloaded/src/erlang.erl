@@ -86,15 +86,15 @@
       | 'nano_seconds'.
 
 -opaque prepared_code() :: reference().
-
 -export_type([prepared_code/0]).
 
--opaque dist_handle() :: atom().
+-opaque nif_resource() :: reference().
+-export_type([nif_resource/0]).
 
+-opaque dist_handle() :: atom().
 -export_type([dist_handle/0]).
 
 -type iovec() :: [binary()].
-
 -export_type([iovec/0]).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -2316,7 +2316,7 @@ process_flag(_Flag, _Value) ->
       {min_heap_size, MinHeapSize :: non_neg_integer()} |
       {min_bin_vheap_size, MinBinVHeapSize :: non_neg_integer()} |
       {max_heap_size, MaxHeapSize :: max_heap_size()} |
-      {monitored_by, Pids :: [pid()]} |
+      {monitored_by, MonitoredBy :: [pid() | port() | nif_resource()]} |
       {monitors,
        Monitors :: [{process | port, Pid :: pid() | port() |
                                      {RegName :: atom(), Node :: node()}}]} |
@@ -2681,11 +2681,12 @@ tuple_to_list(_Tuple) ->
          (dist_ctrl) -> {Node :: node(),
                          ControllingEntity :: port() | pid()};
          (driver_version) -> string();
-	 (dynamic_trace) -> none | dtrace | systemtap;
+         (dynamic_trace) -> none | dtrace | systemtap;
          (dynamic_trace_probes) -> boolean();
          (end_time) -> non_neg_integer();
          (elib_malloc) -> false;
          (eager_check_io) -> boolean();
+         (ets_count) -> pos_integer();
          (ets_limit) -> pos_integer();
          (fullsweep_after) -> {fullsweep_after, non_neg_integer()};
          (garbage_collection) -> [{atom(), integer()}];

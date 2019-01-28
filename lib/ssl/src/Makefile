@@ -44,8 +44,6 @@ BEHAVIOUR_MODULES= \
 
 MODULES= \
 	ssl \
-	tls \
-	dtls \
 	ssl_alert \
 	ssl_app \
 	ssl_sup \
@@ -64,9 +62,11 @@ MODULES= \
 	ssl_certificate\
 	ssl_pkix_db\
 	ssl_cipher \
+	ssl_cipher_format \
 	ssl_srp_primes \
 	tls_connection \
 	dtls_connection \
+	tls_sender\
 	ssl_config \
 	ssl_connection \
 	tls_handshake \

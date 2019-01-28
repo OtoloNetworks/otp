@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -127,7 +127,13 @@ cache_pem_file(File, DbHandle) ->
 	[Content]  ->
 	    {ok, Content};
 	undefined ->
-            ssl_pem_cache:insert(File)
+            case ssl_pkix_db:decode_pem_file(File) of
+                {ok, Content} ->
+                    ssl_pem_cache:insert(File, Content),
+                    {ok, Content};
+                Error ->
+                    Error
+            end
     end.
 
 %%--------------------------------------------------------------------

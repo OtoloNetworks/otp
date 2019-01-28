@@ -81,13 +81,13 @@ client_hello(Host, Port, ConnectionStates,
 -spec hello(#server_hello{} | #client_hello{}, #ssl_options{},
 	    ssl_record:connection_states() | {inet:port_number(), #session{}, db_handle(),
 				    atom(), ssl_record:connection_states(), 
-				    binary() | undefined, ssl_cipher:key_algo()},
+				    binary() | undefined, ssl_cipher_format:key_algo()},
 	    boolean()) ->
 		   {tls_record:tls_version(), session_id(), 
 		    ssl_record:connection_states(), alpn | npn, binary() | undefined}|
 		   {tls_record:tls_version(), {resumed | new, #session{}}, 
 		    ssl_record:connection_states(), binary() | undefined, 
-		    #hello_extensions{}, {ssl_cipher:hash(), ssl_cipher:sign_algo()} | 
+		    #hello_extensions{}, {ssl_cipher_format:hash(), ssl_cipher_format:sign_algo()} | 
                     undefined} | #alert{}.
 %%
 %% Description: Handles a received hello message
@@ -126,6 +126,9 @@ hello(#client_hello{client_version = ClientVersion,
 		handle_client_hello(Version, Hello, SslOpts, Info, Renegotiation)
 	end
     catch
+        error:{case_clause,{asn1, Asn1Reason}} ->
+	    %% ASN-1 decode of certificate somehow failed
+            ?ALERT_REC(?FATAL, ?INTERNAL_ERROR, {failed_to_decode_own_certificate, Asn1Reason});
 	_:_ ->
 	    ?ALERT_REC(?FATAL, ?HANDSHAKE_FAILURE, malformed_handshake_data)
     end.  
@@ -196,7 +199,7 @@ handle_client_hello(Version,
 		no_suite ->
                     ?ALERT_REC(?FATAL, ?INSUFFICIENT_SECURITY, no_suitable_ciphers);
 		_ ->
-		    #{key_exchange := KeyExAlg} = ssl_cipher:suite_definition(CipherSuite),
+		    #{key_exchange := KeyExAlg} = ssl_cipher_format:suite_definition(CipherSuite),
 		    case ssl_handshake:select_hashsign(ClientHashSigns, Cert, KeyExAlg, 
                                                        SupportedHashSigns, Version) of
 			#alert{} = Alert ->

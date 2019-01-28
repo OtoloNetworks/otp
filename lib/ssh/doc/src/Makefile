@@ -45,6 +45,7 @@ XML_REF3_FILES = \
 	ssh_connection.xml \
 	ssh_server_channel.xml \
 	ssh_server_key_api.xml \
+	ssh_file.xml \
 	ssh_sftp.xml \
 	ssh_sftpd.xml \
 
@@ -56,8 +57,8 @@ XML_CHAPTER_FILES = \
 	notes.xml \
 	introduction.xml \
 	using_ssh.xml \
+	terminology.xml \
 	configure_algos.xml
-#	ssh_protocol.xml \
 
 BOOK_FILES = book.xml
 
@@ -119,6 +120,7 @@ html: images $(HTML_REF_MAN_FILE)
 
 clean clean_docs:
 	rm -rf $(HTMLDIR)/*
+	rm -rf $(XMLDIR)
 	rm -f $(MAN3DIR)/*
 	rm -f $(TOP_PDF_FILE) $(TOP_PDF_FILE:%.pdf=%.fo)
 	rm -f $(SPECS_FILES)

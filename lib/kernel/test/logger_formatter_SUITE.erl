@@ -166,6 +166,56 @@ single_line(_Config) ->
     " info:\nterm\n" = string:prefix(String2,ExpectedTimestamp), 
 
     String2 = format(info,{"~p",[term]},#{time=>Time},#{single_line=>bad}),
+
+
+    %% Test that no extra commas/spaces are added when removing
+    %% newlines, especially not after "=>" in a map association (as
+    %% was the case in OTP-21.0, when the only single_line adjustment
+    %% was done by regexp replacement of "\n" by ", ").
+    Prefix =
+        "Some characters to fill the line ------------------------------------- ",
+    String3 = format(info,{"~s~p~n~s~p~n",[Prefix,
+                                           lists:seq(1,10),
+                                           Prefix,
+                                           #{a=>map,with=>a,few=>accociations}]},
+                     #{time=>Time},
+                     #{single_line=>true}),
+    ct:log(String3),
+    match = re:run(String3,"\\[1,2,3,4,5,6,7,8,9,10\\]",[{capture,none}]),
+    match = re:run(String3,
+                   "#{a => map,few => accociations,with => a}",
+                   [{capture,none}]),
+
+    %% This part is added to make sure that the previous test made
+    %% sense, i.e. that there would actually be newlines inside the
+    %% list and map.
+    String4 = format(info,{"~s~p~n~s~p~n",[Prefix,
+                                           lists:seq(1,10),
+                                           Prefix,
+                                           #{a=>map,with=>a,few=>accociations}]},
+                     #{time=>Time},
+                     #{single_line=>false}),
+    ct:log(String4),
+    match = re:run(String4,"\\[1,2,3,\n",[global,{capture,none}]),
+    {match,Match4} = re:run(String4,"=>\n",[global,{capture,all}]),
+    3 = length(Match4),
+
+    %% Test that big metadata fields do not get line breaks
+    String5 = format(info,"",
+                     #{mymeta=>lists:seq(1,100)},
+                     #{single_line=>true,template=>[mymeta,"\n"]}),
+    ct:log(String5),
+    [_] = string:lexemes(String5,"\n"),
+
+    %% Ensure that the previous test made sense, i.e. that the
+    %% metadata field does produce multiple lines if
+    %% single_line==false.
+    String6 = format(info,"",
+                     #{mymeta=>lists:seq(1,100)},
+                     #{single_line=>false,template=>[mymeta,"\n"]}),
+    ct:log(String6),
+    [_,_|_] = string:lexemes(String6,"\n"),
+
     ok.
 
 template(_Config) ->
@@ -312,30 +362,48 @@ format_msg(_Config) ->
                      #{report_cb=>fun(_)-> faulty_return end},
                      #{template=>Template}),
     ct:log(String5),
-    "REPORT_CB ERROR: term; Returned: faulty_return" = String5,
+    "REPORT_CB/1 ERROR: term; Returned: faulty_return" = String5,
 
     String6 = format(info,{report,term},
                      #{report_cb=>fun(_)-> erlang:error(fun_crashed) end},
                      #{template=>Template}),
     ct:log(String6),
-    "REPORT_CB CRASH: term; Reason: {error,fun_crashed}" = String6,
+    "REPORT_CB/1 CRASH: term; Reason: {error,fun_crashed,"++_ = String6,
 
-    %% strings are not formatted
-    String7 = format(info,{string,"string"},
-                     #{report_cb=>fun(_)-> {"formatted",[]} end},
+    String7 = format(info,{report,term},
+                     #{report_cb=>fun(_,_)-> ['not',a,string] end},
                      #{template=>Template}),
     ct:log(String7),
-    "string" = String7,
+    "REPORT_CB/2 ERROR: term; Returned: ['not',a,string]" = String7,
 
-    String8 = format(info,{string,['not',printable,list]},
+    String8 = format(info,{report,term},
+                     #{report_cb=>fun(_,_)-> faulty_return end},
+                     #{template=>Template}),
+    ct:log(String8),
+    "REPORT_CB/2 ERROR: term; Returned: faulty_return" = String8,
+
+    String9 = format(info,{report,term},
+                     #{report_cb=>fun(_,_)-> erlang:error(fun_crashed) end},
+                     #{template=>Template}),
+    ct:log(String9),
+    "REPORT_CB/2 CRASH: term; Reason: {error,fun_crashed,"++_ = String9,
+
+    %% strings are not formatted
+    String10 = format(info,{string,"string"},
                      #{report_cb=>fun(_)-> {"formatted",[]} end},
                      #{template=>Template}),
-    ct:log("~ts",[String8]), % avoiding ct_log crash
-    "FORMAT ERROR: \"~ts\" - [['not',printable,list]]" = String8,
+    ct:log(String10),
+    "string" = String10,
 
-    String9 = format(info,{string,"string"},#{},#{template=>Template}),
-    ct:log(String9),
-    "string" = String9,
+    String11 = format(info,{string,['not',printable,list]},
+                     #{report_cb=>fun(_)-> {"formatted",[]} end},
+                     #{template=>Template}),
+    ct:log("~ts",[String11]), % avoiding ct_log crash
+    "FORMAT ERROR: \"~ts\" - [['not',printable,list]]" = String11,
+
+    String12 = format(info,{string,"string"},#{},#{template=>Template}),
+    ct:log(String12),
+    "string" = String12,
 
     ok.
 
@@ -639,8 +707,10 @@ check_config(_Config) ->
     ?cfgerr({max_size,bad}) =
         logger_formatter:check_config(#{max_size => bad}),
 
+    ok =
+        logger_formatter:check_config(#{report_cb => fun(_,_) -> "" end}),
     ?cfgerr({report_cb,F}) =
-        logger_formatter:check_config(#{report_cb => F=fun(_,_) -> {"",[]} end}),
+        logger_formatter:check_config(#{report_cb => F=fun(_,_,_) -> {"",[]} end}),
     ?cfgerr({report_cb,bad}) =
         logger_formatter:check_config(#{report_cb => bad}),
 
@@ -695,6 +765,8 @@ check_config(_Config) ->
 %% Test that formatter config can be changed, and that the default
 %% template is updated accordingly
 update_config(_Config) ->
+    {error,{not_found,?MODULE}} = logger:update_formatter_config(?MODULE,#{}),
+
     logger:add_handler_filter(default,silence,{fun(_,_) -> stop end,ok}),
     ok = logger:add_handler(?MODULE,?MODULE,#{}),
     D = lists:seq(1,1000),
@@ -746,6 +818,11 @@ update_config(_Config) ->
     [ct:log(L) || L <- Lines6],
     ct:log("~p",[C6]),
     ["=NOTICE REPORT==== "++_,_D6] = Lines6,
+
+    {error,{invalid_formatter_config,bad}} =
+        logger:update_formatter_config(?MODULE,bad),
+    {error,{invalid_formatter_config,logger_formatter,{depth,bad}}} =
+        logger:update_formatter_config(?MODULE,depth,bad),
 
     ok.
 

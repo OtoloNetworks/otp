@@ -76,7 +76,6 @@
 suite() -> [].
 
 all() ->
-    test_lib:recompile(?MODULE),
     [
 	%% literals
 	t_build_and_match_literals, t_build_and_match_literals_large,
@@ -130,8 +129,12 @@ all() ->
 
 groups() -> [].
 
-init_per_suite(Config) -> Config.
-end_per_suite(_Config) -> ok.
+init_per_suite(Config) ->
+    test_lib:recompile(?MODULE),
+    Config.
+
+end_per_suite(_Config) ->
+    ok.
 
 init_per_group(_GroupName, Config) -> Config.
 end_per_group(_GroupName, Config) -> Config.
@@ -1209,10 +1212,25 @@ t_guard_bifs(Config) when is_list(Config) ->
     true   = map_guard_empty_2(),
     true   = map_guard_head(#{a=>1}),
     false  = map_guard_head([]),
+
     true   = map_get_head(#{a=>1}),
+    false  = map_get_head(#{}),
     false  = map_get_head([]),
+
+    true   = map_get_head_not(#{a=>false}),
+    false  = map_get_head_not(#{a=>true}),
+    false  = map_get_head(#{}),
+    false  = map_get_head([]),
+
     true   = map_is_key_head(#{a=>1}),
     false  = map_is_key_head(#{}),
+    false  = map_is_key_head(not_a_map),
+
+    false  = map_is_key_head_not(#{a=>1}),
+    true   = map_is_key_head_not(#{b=>1}),
+    true   = map_is_key_head_not(#{}),
+    false  = map_is_key_head_not(not_a_map),
+
     true   = map_guard_body(#{a=>1}),
     false  = map_guard_body({}),
     true   = map_guard_pattern(#{a=>1, <<"hi">> => "hi" }),
@@ -1221,6 +1239,57 @@ t_guard_bifs(Config) when is_list(Config) ->
     true   = map_guard_ill_map_size(),
     true   = map_field_check_sequence(#{a=>1}),
     false  = map_field_check_sequence(#{}),
+
+    %% The guard BIFs used in a body.
+
+    v = map_get(a, id(#{a=>v})),
+    {'EXIT',{{badkey,a},_}} =
+        (catch map_get(a, id(#{}))),
+    {'EXIT',{{badmap,not_a_map},_}} =
+        (catch map_get(a, id(not_a_map))),
+
+    true   = is_map_key(a, id(#{a=>1})),
+    false  = is_map_key(b, id(#{a=>1})),
+    false  = is_map_key(b, id(#{})),
+    {'EXIT',{{badmap,not_a_map},_}} =
+        (catch is_map_key(b, id(not_a_map))),
+
+    {true,v} = erl_699(#{k=>v}),
+    {'EXIT',{{badkey,k},_}} = (catch erl_699(#{})),
+    {'EXIT',{{badmap,not_a_map},_}} = (catch erl_699(not_a_map)),
+
+    %% Cover optimizations in beam_dead.
+
+    ok = beam_dead_1(#{a=>any,k=>true}),
+    error = beam_dead_1(#{a=>any,k=>false}),
+    error = beam_dead_1(#{a=>any}),
+    error = beam_dead_1(#{}),
+
+    ok = beam_dead_2(#{a=>any,k=>true}),
+    error = beam_dead_2(#{a=>any,k=>false}),
+    error = beam_dead_2(#{a=>any}),
+    error = beam_dead_2(#{}),
+
+    ok = beam_dead_3(#{k=>true}),
+    error = beam_dead_3(#{k=>false}),
+    error = beam_dead_3(#{}),
+
+    ok = beam_dead_4(#{k=>true}),
+    error = beam_dead_4(#{k=>false}),
+    error = beam_dead_4(#{}),
+    error = beam_dead_4(not_a_map),
+
+    ok = beam_dead_5(#{k=>true}),
+    error = beam_dead_5(#{k=>false}),
+    error = beam_dead_3(#{}),
+
+    %% Test is_map_key/2 followed by map update.
+
+    Used0 = map_usage(var, #{other=>value}),
+    Used0 = #{other=>value,var=>dead},
+    Used1 = map_usage(var, #{var=>live}),
+    Used1 = #{var=>live},
+
     ok.
 
 map_guard_empty() when is_map(#{}); false -> true.
@@ -1233,8 +1302,14 @@ map_guard_head(_) -> false.
 map_get_head(M) when map_get(a, M) =:= 1 -> true;
 map_get_head(_) -> false.
 
+map_get_head_not(M) when not map_get(a, M) -> true;
+map_get_head_not(_) -> false.
+
 map_is_key_head(M) when is_map_key(a, M) -> true;
-map_is_key_head(M) -> false.
+map_is_key_head(_) -> false.
+
+map_is_key_head_not(M) when not is_map_key(a, M) -> true;
+map_is_key_head_not(_) -> false.
 
 map_guard_body(M) -> is_map(M).
 
@@ -1250,6 +1325,52 @@ map_field_check_sequence(M)
     true;
 map_field_check_sequence(_) ->
     false.
+
+erl_699(M) ->
+    %% Used to cause an internal consistency failure.
+    {is_map_key(k, M),maps:get(k, M)}.
+
+beam_dead_1(#{a:=_,k:=_}=M) when map_get(k, M) ->
+    ok;
+beam_dead_1(#{}) ->
+    error.
+
+beam_dead_2(M) ->
+    case M of
+        #{a:=_,k:=_} when map_get(k, M) ->
+            ok;
+        #{} ->
+            error
+    end.
+
+beam_dead_3(M) ->
+    case M of
+        #{k:=_} when map_get(k, M) ->
+            ok;
+        #{} ->
+            error
+    end.
+
+beam_dead_4(M) ->
+    case M of
+        #{} when map_get(k, M) ->
+            ok;
+        _ ->
+            error
+    end.
+
+beam_dead_5(#{}=M) when map_get(k, M) ->
+    ok;
+beam_dead_5(#{}) ->
+    error.
+
+%% Test is_map_key/2, followed by an update of the map.
+map_usage(Def, Used) ->
+    case is_map_key(Def, Used) of
+        true -> Used;
+        false -> Used#{Def=>dead}
+    end.
+
 
 t_guard_sequence(Config) when is_list(Config) ->
 	{1, "a"} = map_guard_sequence_1(#{seq=>1,val=>id("a")}),
