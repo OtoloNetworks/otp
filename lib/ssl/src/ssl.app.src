@@ -4,13 +4,17 @@
     {modules, [
 	       %% TLS/SSL 
 	       tls_connection,
+	       tls_connection_1_3,
 	       tls_handshake,
+	       tls_handshake_1_3,
 	       tls_record,
+	       tls_record_1_3,
 	       tls_socket,
 	       tls_v1,
 	       ssl_v3,
 	       tls_connection_sup,
 	       tls_sender,
+	       ssl_dh_groups,
 	       %% DTLS
 	       dtls_connection,
 	       dtls_handshake,
@@ -51,6 +55,8 @@
 	       ssl_crl_cache, 
 	       ssl_crl_cache_api,
 	       ssl_crl_hash_dir,
+	       %% Logging
+	       ssl_logger,
 	       %% App structure
 	       ssl_app,
 	       ssl_sup,

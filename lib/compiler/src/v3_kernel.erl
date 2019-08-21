@@ -82,8 +82,7 @@
 -export([module/2,format_error/1]).
 
 -import(lists, [map/2,foldl/3,foldr/3,mapfoldl/3,splitwith/2,member/2,
-		keymember/3,keyfind/3,partition/2,droplast/1,last/1,sort/1,
-                reverse/1]).
+		keyfind/3,partition/2,droplast/1,last/1,sort/1,reverse/1]).
 -import(ordsets, [add_element/2,del_element/2,union/2,union/1,subtract/2]).
 -import(cerl, [c_tuple/1]).
 
@@ -1415,8 +1414,6 @@ is_remote_bif(_, _, _) -> false.
 %%  return multiple values.  Only used in bodies where a BIF may be
 %%  called for effect only.
 
-bif_vals(dsetelement, 3) -> 0;
-bif_vals(bs_context_to_binary, 1) -> 0;
 bif_vals(_, _) -> 1.
 
 bif_vals(_, _, _) -> 1.
@@ -1593,19 +1590,12 @@ match_var([U|Us], Cs0, Def, St) ->
 %%  constructor/constant as first argument.  Group the constructors
 %%  according to type, the order is really irrelevant but tries to be
 %%  smart.
-
-match_con(Us, Cs0, Def, St) ->
-    %% Expand literals at the top level.
-    Cs = [expand_pat_lit_clause(C) || C <- Cs0],
-    match_con_1(Us, Cs, Def, St).
-
-match_con_1([U|_Us] = L, Cs, Def, St0) ->
+match_con([U|_Us] = L, Cs, Def, St0) ->
     %% Extract clauses for different constructors (types).
     %%ok = io:format("match_con ~p~n", [Cs]),
-    Ttcs0 = select_types([k_binary], Cs) ++ select_bin_con(Cs) ++
-        select_types([k_cons,k_tuple,k_map,k_atom,k_float,
-                      k_int,k_nil], Cs),
-    Ttcs = opt_single_valued(Ttcs0),
+    Ttcs0 = select_types(Cs, [], [], [], [], [], [], [], [], []),
+    Ttcs1 = [{T, Types} || {T, [_ | _] = Types} <- Ttcs0],
+    Ttcs = opt_single_valued(Ttcs1),
     %%ok = io:format("ttcs = ~p~n", [Ttcs]),
     {Scs,St1} =
 	mapfoldl(fun ({T,Tcs}, St) ->
@@ -1616,8 +1606,41 @@ match_con_1([U|_Us] = L, Cs, Def, St0) ->
 		 St0, Ttcs),
     {build_alt_1st_no_fail(build_select(U, Scs), Def),St1}.
 
-select_types(Types, Cs) ->
-    [{T,Tcs} || T <- Types, begin Tcs = select(T, Cs), Tcs =/= [] end].
+select_types([NoExpC | Cs], Bin, BinCon, Cons, Tuple, Map, Atom, Float, Int, Nil) ->
+    C = expand_pat_lit_clause(NoExpC),
+    case clause_con(C) of
+	k_binary ->
+	    select_types(Cs, [C |Bin], BinCon, Cons, Tuple, Map, Atom, Float, Int, Nil);
+	k_bin_seg ->
+	    select_types(Cs, Bin, [C | BinCon], Cons, Tuple, Map, Atom, Float, Int, Nil);
+	k_bin_end ->
+	    select_types(Cs, Bin, [C | BinCon], Cons, Tuple, Map, Atom, Float, Int, Nil);
+	k_cons ->
+	    select_types(Cs, Bin, BinCon, [C | Cons], Tuple, Map, Atom, Float, Int, Nil);
+	k_tuple ->
+	    select_types(Cs, Bin, BinCon, Cons, [C | Tuple], Map, Atom, Float, Int, Nil);
+	k_map ->
+	    select_types(Cs, Bin, BinCon, Cons, Tuple, [C | Map], Atom, Float, Int, Nil);
+	k_atom ->
+	    select_types(Cs, Bin, BinCon, Cons, Tuple, Map, [C | Atom], Float, Int, Nil);
+	k_float ->
+	    select_types(Cs, Bin, BinCon, Cons, Tuple, Map, Atom, [C | Float], Int, Nil);
+	k_int ->
+	    select_types(Cs, Bin, BinCon, Cons, Tuple, Map, Atom, Float, [C | Int], Nil);
+	k_nil ->
+	    select_types(Cs, Bin, BinCon, Cons, Tuple, Map, Atom, Float, Int, [C | Nil])
+    end;
+select_types([], Bin, BinCon, Cons, Tuple, Map, Atom, Float, Int, Nil) ->
+    [{k_binary, reverse(Bin)}] ++ handle_bin_con(reverse(BinCon)) ++
+	[
+	    {k_cons, reverse(Cons)},
+	    {k_tuple, reverse(Tuple)},
+	    {k_map, reverse(Map)},
+	    {k_atom, reverse(Atom)},
+	    {k_float, reverse(Float)},
+	    {k_int, reverse(Int)},
+	    {k_nil, reverse(Nil)}
+	].
 
 expand_pat_lit_clause(#iclause{pats=[#ialias{pat=#k_literal{anno=A,val=Val}}=Alias|Ps]}=C) ->
     P = expand_pat_lit(Val, A),
@@ -1746,20 +1769,12 @@ combine_bin_segs(#k_bin_end{}) ->
 combine_bin_segs(_) ->
     throw(not_possible).
 
-%% select_bin_con([Clause]) -> [{Type,[Clause]}].
-%%  Extract clauses for the k_bin_seg constructor.  As k_bin_seg
+%% handle_bin_con([Clause]) -> [{Type,[Clause]}].
+%%  Handle clauses for the k_bin_seg constructor.  As k_bin_seg
 %%  matching can overlap, the k_bin_seg constructors cannot be
 %%  reordered, only grouped.
 
-select_bin_con(Cs0) ->
-    Cs1 = lists:filter(fun (C) ->
-			       Con = clause_con(C),
-			       (Con =:= k_bin_seg) or (Con =:= k_bin_end)
-		       end, Cs0),
-    select_bin_con_1(Cs1).
-
-
-select_bin_con_1(Cs) ->
+handle_bin_con(Cs) ->
     try
 	%% The usual way to match literals is to first extract the
 	%% value to a register, and then compare the register to the
@@ -1798,14 +1813,14 @@ select_bin_con_1(Cs) ->
 	end
     catch
 	throw:not_possible ->
-	    select_bin_con_2(Cs)
+	    handle_bin_con_not_possible(Cs)
     end.
 
-select_bin_con_2([C1|Cs]) ->
+handle_bin_con_not_possible([C1|Cs]) ->
     Con = clause_con(C1),
     {More,Rest} = splitwith(fun (C) -> clause_con(C) =:= Con end, Cs),
-    [{Con,[C1|More]}|select_bin_con_2(Rest)];
-select_bin_con_2([]) -> [].
+    [{Con,[C1|More]}|handle_bin_con_not_possible(Rest)];
+handle_bin_con_not_possible([]) -> [].
 
 %% select_bin_int([Clause]) -> {k_bin_int,[Clause]}
 %%  If the first pattern in each clause selects the same integer,
@@ -1904,10 +1919,6 @@ select_utf8(Val0) ->
 	error:_ ->
 	    throw(not_possible)
     end.
-
-%% select(Con, [Clause]) -> [Clause].
-
-select(T, Cs) -> [ C || C <- Cs, clause_con(C) =:= T ].
 
 %% match_value([Var], Con, [Clause], Default, State) -> {SelectExpr,State}.
 %%  At this point all the clauses have the same constructor, we must
@@ -2044,8 +2055,9 @@ get_match(#k_binary{}, St0) ->
     {[V]=Mes,St1} = new_vars(1, St0),
     {#k_binary{segs=V},Mes,St1};
 get_match(#k_bin_seg{size=#k_atom{val=all},next={k_bin_end,[]}}=Seg, St0) ->
-    {[S]=Vars,St1} = new_vars(1, St0),
-    {Seg#k_bin_seg{seg=S,next=[]},Vars,St1};
+    {[S,N0],St1} = new_vars(2, St0),
+    N = set_kanno(N0, [no_usage]),
+    {Seg#k_bin_seg{seg=S,next=N},[S],St1};
 get_match(#k_bin_seg{}=Seg, St0) ->
     {[S,N0],St1} = new_vars(2, St0),
     N = set_kanno(N0, [no_usage]),
@@ -2343,8 +2355,7 @@ uexpr(#k_bif{anno=A,op=Op,args=As}=Bif, {break,Rs}, St0) ->
     {Brs,St1} = bif_returns(Op, Rs, St0),
     {Bif#k_bif{anno=#k{us=Used,ns=lit_list_vars(Brs),a=A},ret=Brs},
      Used,St1};
-uexpr(#k_match{anno=A,vars=Vs0,body=B0}, Br, St0) ->
-    Vs = handle_reuse_annos(Vs0, St0),
+uexpr(#k_match{anno=A,vars=Vs,body=B0}, Br, St0) ->
     Rs = break_rets(Br),
     {B1,Bu,St1} = umatch(B0, Br, St0),
     case is_in_guard(St1) of
@@ -2374,9 +2385,10 @@ uexpr(#k_try{anno=A,arg=A0,vars=Vs,body=B0,evars=Evs,handler=H0},
 	true ->
 	    {[#k_var{name=X}],#k_var{name=X}} = {Vs,B0}, %Assertion.
 	    #k_atom{val=false} = H0,		%Assertion.
-	    {A1,Bu,St1} = uexpr(A0, Br, St0),
+	    {Avs,St1} = new_vars(length(Rs0), St0),
+	    {A1,Bu,St} = uexpr(A0, {break,Avs}, St1),
 	    {#k_protected{anno=#k{us=Bu,ns=lit_list_vars(Rs0),a=A},
-			  arg=A1,ret=Rs0},Bu,St1};
+			  arg=A1,ret=Rs0,inner=Avs},Bu,St};
 	false ->
 	    {Avs,St1} = new_vars(length(Vs), St0),
 	    {A1,Au,St2} = ubody(A0, {break,Avs}, St1),
@@ -2446,33 +2458,6 @@ make_fdef(Anno, Name, Arity, Vs, Body) ->
                      vars=Vs,body=Body,ret=[]},
     #k_fdef{anno=Anno,func=Name,arity=Arity,vars=Vs,body=Match}.
 
-
-%% handle_reuse_annos([#k_var{}], State) -> State.
-%%  In general, it is only safe to reuse a variable for a match context
-%%  if the original value of the variable will no longer be needed.
-%%
-%%  If a variable has been bound in an outer letrec and is therefore
-%%  free in the current function, the variable may still be used.
-%%  We don't bother to check whether the variable is actually used,
-%%  but simply clears the 'reuse_for_context' annotation for any variable
-%%  that is free.
-handle_reuse_annos(Vs, St) ->
-    [handle_reuse_anno(V, St) || V <- Vs].
-
-handle_reuse_anno(#k_var{anno=A}=V, St) ->
-    case member(reuse_for_context, A) of
-	false -> V;
-	true -> handle_reuse_anno_1(V, St)
-    end.
-
-handle_reuse_anno_1(#k_var{anno=Anno,name=Vname}=V, #kern{ff={F,A}}=St) ->
-    FreeVs = get_free(F, A, St),
-    case keymember(Vname, #k_var.name, FreeVs) of
-	true -> V#k_var{anno=Anno--[reuse_for_context]};
-	false -> V
-    end;
-handle_reuse_anno_1(V, _St) -> V.
-
 %% get_free(Name, Arity, State) -> [Free].
 %% store_free(Name, Arity, [Free], State) -> State.
 
@@ -2516,8 +2501,7 @@ umatch(#k_alt{anno=A,first=F0,then=T0}, Br, St0) ->
     Used = union(Fu, Tu),
     {#k_alt{anno=#k{us=Used,ns=[],a=A},first=F1,then=T1},
      Used,St2};
-umatch(#k_select{anno=A,var=V0,types=Ts0}, Br, St0) ->
-    V = handle_reuse_anno(V0, St0),
+umatch(#k_select{anno=A,var=V,types=Ts0}, Br, St0) ->
     {Ts1,Tus,St1} = umatch_list(Ts0, Br, St0),
     Used = case member(no_usage, get_kanno(V)) of
 	       true -> Tus;

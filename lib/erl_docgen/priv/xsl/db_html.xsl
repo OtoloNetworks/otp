@@ -191,6 +191,7 @@
     <xsl:variable name="name" select="@name"/>
     <xsl:variable name="arity" select="@arity"/>
     <xsl:variable name="anchor" select="@anchor"/>
+    <xsl:variable name="since" select="@since"/>
     <xsl:variable name="spec0">
       <xsl:call-template name="find_spec"/>
     </xsl:variable>
@@ -225,11 +226,12 @@
         <xsl:variable name="global_types" select="ancestor::erlref/datatypes"/>
 	<xsl:variable name="local_types"
 		      select="../type[string-length(@name) > 0]"/>
-	<xsl:apply-templates select="$spec/contract/clause/head">
+	  <xsl:apply-templates select="$spec/contract/clause/head">
           <xsl:with-param name="ghlink" select="ancestor-or-self::*[@ghlink]/@ghlink"/>
 	  <xsl:with-param name="local_types" select="$local_types"/>
 	  <xsl:with-param name="global_types" select="$global_types"/>
-	</xsl:apply-templates>
+	  <xsl:with-param name="since" select="$since"/>
+	  </xsl:apply-templates>
       </xsl:when>
     </xsl:choose>
   </xsl:template>
@@ -238,19 +240,32 @@
     <xsl:param name="ghlink"/>
     <xsl:param name="local_types"/>
     <xsl:param name="global_types"/>
+    <xsl:param name="since"/>
     <xsl:variable name="id" select="concat(concat(concat(concat(../../../name,'-'),../../../arity),'-'),generate-id(.))"/>
-    <div class="bold_code func-head"
-         onMouseOver="document.getElementById('ghlink-{$id}').style.visibility = 'visible';"
-         onMouseOut="document.getElementById('ghlink-{$id}').style.visibility = 'hidden';">
-      <xsl:call-template name="ghlink">
-        <xsl:with-param name="ghlink" select="$ghlink"/>
-        <xsl:with-param name="id" select="$id"/>
-      </xsl:call-template>
-      <xsl:apply-templates mode="local_type">
-        <xsl:with-param name="local_types" select="$local_types"/>
-        <xsl:with-param name="global_types" select="$global_types"/>
-      </xsl:apply-templates>
-    </div>
+    <table class="func-table">
+    <tr class="func-tr">
+    <td class="func-td">
+      <div class="bold_code func-head"
+           onMouseOver="document.getElementById('ghlink-{$id}').style.visibility = 'visible';"
+           onMouseOut="document.getElementById('ghlink-{$id}').style.visibility = 'hidden';">
+	<xsl:call-template name="ghlink">
+          <xsl:with-param name="ghlink" select="$ghlink"/>
+          <xsl:with-param name="id" select="$id"/>
+	</xsl:call-template>
+	<xsl:apply-templates mode="local_type">
+	  <xsl:with-param name="local_types" select="$local_types"/>
+	  <xsl:with-param name="global_types" select="$global_types"/>
+	</xsl:apply-templates>
+      </div>
+    </td>
+    <td class="func-since-td">
+      <xsl:if test="string-length($since) > 0">
+	<span class="since"><xsl:value-of select="$since"/>
+	</span>
+      </xsl:if>
+    </td>
+    </tr>
+    </table>
   </xsl:template>
 
   <!-- The *last* <name name="..." arity=".."/> -->
@@ -821,6 +836,10 @@
       <!-- .../part -->
       <xsl:call-template name="part.content" />
     </xsl:if>
+    <xsl:if test="$lname = 'internal'">
+      <!-- .../internals -->
+      <xsl:call-template name="internal.content" />
+    </xsl:if>
     <xsl:if test="$lname = 'chapter'">
       <!-- .../part/chapter -->
       <xsl:call-template name="chapter.content">
@@ -844,12 +863,24 @@
     <xsl:param name="chapnum"/>
     <xsl:param name="curModule"/>
     <xsl:if test="(local-name() = 'part') or ((local-name() = 'chapter') and ancestor::part)">
-      <!-- .../part or.../part/chapter  -->
+      <!-- .../part or .../part/chapter  -->
       <xsl:call-template name="menu.ug">
         <xsl:with-param name="chapnum" select="$chapnum"/>
       </xsl:call-template>
     </xsl:if>
-    <xsl:if test="(local-name() = 'application') or (local-name() = 'erlref')or (local-name() = 'comref')or (local-name() = 'cref')or (local-name() = 'fileref')or (local-name() = 'appref')">
+    <xsl:if test="(local-name() = 'internal' and descendant::chapter) or ((local-name() = 'chapter') and ancestor::internal)">
+      <!-- .../internal or .../internal/chapter  -->
+      <xsl:call-template name="menu.internal.ug">
+        <xsl:with-param name="chapnum" select="$chapnum"/>
+      </xsl:call-template>
+    </xsl:if>
+    <xsl:if test="(local-name() = 'internal' and descendant::erlref) or (((local-name() = 'erlref') or (local-name() = 'comref') or (local-name() = 'cref') or (local-name() = 'fileref') or (local-name() = 'appref')) and ancestor::internal)">
+      <!-- .../internal,.../internal/erlref, .../internal/comref or .../internal/cref  or .../internal/fileref or .../internal/appref -->
+      <xsl:call-template name="menu.internal.ref">
+        <xsl:with-param name="curModule" select="$curModule"/>
+      </xsl:call-template>
+    </xsl:if>
+    <xsl:if test="(local-name() = 'application') or (((local-name() = 'erlref') or (local-name() = 'comref') or (local-name() = 'cref') or (local-name() = 'fileref') or (local-name() = 'appref')) and ancestor::application)">
       <!-- .../application,.../application/erlref, .../application/comref or .../application/cref  or .../application/fileref or .../application/appref -->
       <xsl:call-template name="menu.ref">
         <xsl:with-param name="curModule" select="$curModule"/>
@@ -886,6 +917,9 @@
       </xsl:if>
       <xsl:if test="boolean(/book/applications)">
           <li><a href="index.html">Reference Manual</a></li>
+      </xsl:if>
+      <xsl:if test="boolean(/book/internals)">
+          <li><a href="internal_docs.html">Internal Documentation</a></li>
       </xsl:if>
       <xsl:if test="boolean(/book/releasenotes)">
           <li><a href="release_notes.html">Release Notes</a></li>
@@ -927,6 +961,7 @@
   <xsl:template match="/book">
     <xsl:apply-templates select="parts"/>
     <xsl:apply-templates select="applications"/>
+    <xsl:apply-templates select="internals"/>
     <xsl:apply-templates select="releasenotes"/>
   </xsl:template>
 
@@ -938,6 +973,11 @@
   <!-- Applications -->
   <xsl:template match="applications">
     <xsl:apply-templates select="application"/>
+  </xsl:template>
+
+  <!-- Internals -->
+  <xsl:template match="internals">
+    <xsl:apply-templates select="internal"/>
   </xsl:template>
 
  <!-- Header -->
@@ -1296,6 +1336,90 @@
   </xsl:template>
 
 
+  <!-- Internal Docs -->
+
+  <!-- Part -->
+  <xsl:template match="internal">
+
+    <xsl:document href="{$outdir}/internal_docs.html" method="html"  encoding="UTF-8" indent="yes" doctype-public="-//W3C//DTD HTML 4.01 Transitional//EN">
+      <xsl:call-template name="pagelayout"/>
+    </xsl:document>
+  </xsl:template>
+
+
+  <!-- Part content-->
+  <xsl:template name="internal.content">
+    <div class="frontpage"/>
+
+    <center><h1><xsl:value-of select="/book/header/title"/> Internal Docs</h1></center>
+
+    <center><h4>Version <xsl:value-of select="$appver"/></h4></center>
+    <center><h4><xsl:value-of select="$gendate"/></h4></center>
+    <div class="extrafrontpageinfo">
+    <center><xsl:value-of select="$extra_front_page_info"/></center>
+    </div>
+
+    <xsl:apply-templates select="chapter|erlref"/>
+
+  </xsl:template>
+
+  <!-- Menu.internal.chapter -->
+  <xsl:template name="menu.internal.ug">
+    <xsl:param name="chapnum"/>
+
+    <div id="leftnav">
+      <div class="innertube">
+
+        <xsl:call-template name="erlang_logo"/>
+
+        <p class="section-title"><xsl:value-of select="/book/header/title"/></p>
+        <p class="section-subtitle">Internal Documentation</p>
+        <p class="section-version">Version <xsl:value-of select="$appver"/></p>
+
+        <xsl:call-template name="menu_top"/>
+
+        <xsl:call-template name="menu_middle"/>
+
+        <h3>Chapters</h3>
+
+        <ul class="flipMenu" imagepath="{$topdocdir}/js/flipmenu">
+          <xsl:call-template name="menu.chapter">
+            <xsl:with-param name="entries" select="/book/internals/internal/chapter[header/title]"/>
+            <xsl:with-param name="chapnum" select="$chapnum"/>
+          </xsl:call-template>
+        </ul>
+      </div>
+    </div>
+  </xsl:template>
+
+    <!-- Menu.internal.ref -->
+  <xsl:template name="menu.internal.ref">
+      <xsl:param name="curModule"/>
+      <div id="leftnav">
+      <div class="innertube">
+
+        <xsl:call-template name="erlang_logo"/>
+
+        <p class="section-title"><xsl:value-of select="/book/header/title"/></p>
+        <p class="section-subtitle">Reference Manual</p>
+        <p class="section-version">Version <xsl:value-of select="$appver"/></p>
+
+        <xsl:call-template name="menu_top"/>
+
+        <xsl:call-template name="menu_middle"/>
+
+        <h3>Table of Contents</h3>
+
+        <ul class="flipMenu">
+          <xsl:call-template name="menu.ref2">
+            <xsl:with-param name="entries" select="/book/internals/internal/erlref[module]|/book/internals/internal/cref[lib]|/book/internals/internal/comref[com]|/book/internals/internal/fileref[file]|/book/internals/internal/appref[app]"/>
+            <!--xsl:with-param name="genFuncMenu" select="true"/-->
+            <xsl:with-param name="curModule" select="$curModule"/>
+          </xsl:call-template>
+        </ul>
+      </div>
+    </div>
+  </xsl:template>
 
 
   <!--Users Guide -->
@@ -1884,6 +2008,16 @@
         <xsl:with-param name="partnum" select="$partnum"/>
       </xsl:apply-templates>
     </div>
+    <!-- Since -->
+    <xsl:if test="string-length(../module/@since) > 0">
+      <xsl:call-template name="h3_title_link">
+	<xsl:with-param name="title">Since</xsl:with-param>
+      </xsl:call-template>
+      <div class="REFBODY module-since">
+	Module <xsl:value-of select="../module"/> was introduced in
+	<xsl:value-of select="../module/@since"/>.
+      </div>
+    </xsl:if>
   </xsl:template>
 
   <!-- Lib -->
@@ -2030,11 +2164,10 @@
   <xsl:template match="func">
     <xsl:param name="partnum"/>
 
-    <p><xsl:apply-templates select="name"/>
-       <xsl:apply-templates
-           select="name[string-length(@arity) > 0 and position()=last()]"
-           mode="types"/>
-    </p>
+    <xsl:apply-templates select="name"/>
+    <xsl:apply-templates
+        select="name[string-length(@arity) > 0 and position()=last()]"
+        mode="types"/>
 
     <xsl:apply-templates select="fsummary|type|desc">
       <xsl:with-param name="partnum" select="$partnum"/>
@@ -2093,19 +2226,22 @@
 
     <xsl:choose>
       <xsl:when test="ancestor::cref">
-        <span class="bold_code bc-7">
-          <xsl:call-template name="title_link">
-            <xsl:with-param name="link" select="substring-before(nametext, '(')"/>
-            <xsl:with-param name="title">
-              <xsl:value-of select="ret"/>
-              <xsl:call-template name="maybe-space-after-ret">
-                <xsl:with-param name="s" select="ret"/>
-              </xsl:call-template>
-              <xsl:value-of select="nametext"/>
-            </xsl:with-param>
-          </xsl:call-template>
-        </span>
-        <br/>
+	<table class="func-table">
+	  <tr class="func-tr">
+	    <td class="cfunc-td">
+              <span class="bold_code bc-7">
+		<xsl:call-template name="title_link">
+		  <xsl:with-param name="link" select="substring-before(nametext, '(')"/>
+		</xsl:call-template>
+              </span>
+	    </td>
+	    <td class="func-since-td">
+	      <xsl:if test="string-length(@since) > 0">
+		<span class="since"><xsl:value-of select="@since"/></span>
+	      </xsl:if>
+	    </td>
+	  </tr>
+	</table>
       </xsl:when>
       <xsl:when test="ancestor::erlref">
         <xsl:variable name="fname">
@@ -2136,14 +2272,25 @@
             </div>
 	  </xsl:when>
           <xsl:otherwise>
-            <div class="bold_code fun-type">
-              <xsl:call-template name="title_link">
-                <xsl:with-param name="link" select="concat(concat($fname,'-'),$arity)"/>
-                <xsl:with-param name="title">
-                  <xsl:apply-templates/>
-                </xsl:with-param>
-              </xsl:call-template>
-            </div>
+	    <table class="func-table">
+	      <tr class="func-tr">
+	      <td class="func-td">
+		<div class="bold_code fun-type">
+		  <xsl:call-template name="title_link">
+                    <xsl:with-param name="link" select="concat(concat($fname,'-'),$arity)"/>
+                    <xsl:with-param name="title">
+                      <xsl:apply-templates/>
+                    </xsl:with-param>
+		  </xsl:call-template>
+		</div>
+	      </td>
+	      <td class="func-since-td">
+		<xsl:if test="string-length(@since) > 0">
+		  <span class="since"><xsl:value-of select="@since"/></span>
+		</xsl:if>
+	      </td>
+	      </tr>
+	    </table>
           </xsl:otherwise>
 	</xsl:choose>
       </xsl:when>
@@ -2153,18 +2300,6 @@
     </xsl:choose>
 
   </xsl:template>
-
-  <xsl:template name="maybe-space-after-ret">
-    <xsl:param name="s"/>
-    <xsl:variable name="last_char"
-	          select="substring($s, string-length($s), 1)"/>
-    <xsl:choose>
-      <xsl:when test="$last_char != '*'">
-        <xsl:text> </xsl:text>
-      </xsl:when>
-    </xsl:choose>
-  </xsl:template>
-
 
   <!-- Type -->
   <xsl:template match="type">
@@ -2219,7 +2354,7 @@
   </xsl:template>
 
   <xsl:template name="title_link">
-    <xsl:param name="title"/>
+    <xsl:param name="title" select="'APPLY'"/>
     <xsl:param name="link" select="erl:to-link(title)"/>
     <xsl:param name="ghlink" select="ancestor-or-self::*[@ghlink][position() = 1]/@ghlink"/>
     <xsl:variable name="id" select="concat(concat($link,'-'), generate-id(.))"/>
@@ -2229,7 +2364,16 @@
           <xsl:with-param name="id" select="$id"/>
           <xsl:with-param name="ghlink" select="$ghlink"/>
       </xsl:call-template>
-      <a class="title_link" name="{$link}" href="#{$link}"><xsl:value-of select="$title"/></a>
+      <a class="title_link" name="{$link}" href="#{$link}">
+	<xsl:choose>
+	  <xsl:when test="$title = 'APPLY'">
+	    <xsl:apply-templates/>   <!-- like <ret> and <nametext> -->
+	  </xsl:when>
+	  <xsl:otherwise>
+	    <xsl:value-of select="$title"/>
+	  </xsl:otherwise>
+	</xsl:choose>
+      </a>
     </span>
   </xsl:template>
 
@@ -2657,6 +2801,48 @@
 
   <xsl:template match="seealso//text()">
     <xsl:value-of select="normalize-space(.)"/>
+  </xsl:template>
+
+  <xsl:template match="ret">
+    <xsl:value-of select="."/>
+    <xsl:variable name="last_char" select="substring(., string-length(.), 1)"/>
+    <xsl:if test="$last_char != '*'">
+      <xsl:text> </xsl:text>
+    </xsl:if>
+  </xsl:template>
+
+  <xsl:template match="nametext">
+    <xsl:value-of select="substring-before(.,'(')"/>
+    <xsl:text>(</xsl:text>
+    <xsl:variable name="arglist" select="substring-after(.,'(')"/>
+    <xsl:choose>
+      <xsl:when test="$arglist = ')' or $arglist = 'void)'">
+	<xsl:value-of select="$arglist"/>
+      </xsl:when>
+      <xsl:otherwise>
+	<br/>
+	<xsl:call-template name="cfunc-arglist">
+	  <xsl:with-param name="text" select="$arglist"/>
+	</xsl:call-template>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- Format C function argument list with <br> after comma -->
+  <xsl:template name="cfunc-arglist">
+    <xsl:param name="text"/>
+    <xsl:variable name="line" select="normalize-space($text)"/>
+    <xsl:choose>
+      <xsl:when test="contains($line,',')">
+	<xsl:value-of select="substring-before($line,',')"/>,<br/>
+        <xsl:call-template name="cfunc-arglist">
+          <xsl:with-param name="text" select="substring-after($line,',')"/>
+        </xsl:call-template>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="$line"/>
+      </xsl:otherwise>
+    </xsl:choose>
   </xsl:template>
 
 </xsl:stylesheet>

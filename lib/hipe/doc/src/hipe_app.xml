@@ -62,6 +62,15 @@
       and the runtime system that have limited or no support for HiPE compiled modules.
     </p>
     <taglist>
+      <tag>Binary matching</tag>
+      <item><p>The HiPE compiler will crash on modules containing binary
+      matching.</p>
+      </item>
+      <tag>try/catch</tag>
+      <item><p>The HiPE compiler will crash on modules containing 'try' or
+      'catch'.</p>
+      </item>
+
       <tag>Stack traces</tag>
       <item><p>Stack traces returned from <seealso marker="erts:erlang#get_stacktrace/0">
       <c>erlang:get_stacktrace/0</c></seealso> or as part of <c>'EXIT'</c> terms
@@ -78,12 +87,12 @@
       </item>
 
       <tag>NIFs</tag>
-      <item><p>Modules compiled with HiPE can not call <seealso marker="erts:erlang#load_nif-2">
+      <item><p>Modules compiled with HiPE cannot call <seealso marker="erts:erlang#load_nif-2">
       <c>erlang:load_nif/2</c></seealso> to load NIFs.</p>
       </item>
 
       <tag>-on_load</tag>
-      <item><p>Modules compiled with HiPE can not use
+      <item><p>Modules compiled with HiPE cannot use
       <seealso marker="doc/reference_manual:code_loading#on_load"><c>-on_load()</c></seealso>
       directives.</p>
       </item>

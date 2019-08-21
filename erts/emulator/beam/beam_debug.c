@@ -332,6 +332,13 @@ erts_debug_disassemble_1(BIF_ALIST_1)
 		   "unknown " HEXF "\n", instr);
 	code_ptr++;
     }
+    if (i == op_call_nif) {
+        /*
+         * The rest of the code will not be executed. Don't disassemble any
+         * more code in this function.
+         */
+        code_ptr = 0;
+    }
     bin = new_binary(p, (byte *) dsbufp->str, dsbufp->str_len);
     erts_destroy_tmp_dsbuf(dsbufp);
     hsz = 4+4;
@@ -344,6 +351,22 @@ erts_debug_disassemble_1(BIF_ALIST_1)
                  make_small(cmfa->arity));
     hp += 4;
     return TUPLE3(hp, addr, bin, mfa);
+}
+
+BIF_RETTYPE
+erts_debug_interpreter_size_0(BIF_ALIST_0)
+{
+    int i;
+    BeamInstr low, high;
+
+    low = high = (BeamInstr) process_main;
+    for (i = 0; i < NUM_SPECIFIC_OPS; i++) {
+        BeamInstr a = BeamOpCodeAddr(i);
+        if (a > high) {
+            high = a;
+        }
+    }
+    return erts_make_integer(high - low, BIF_P);
 }
 
 void
@@ -558,23 +581,6 @@ print_op(fmtfn_t to, void *to_arg, int op, int size, BeamInstr* addr)
 	case 'I':
         case 'W':
 	    switch (op) {
-	    case op_i_gc_bif1_jWstd:
-	    case op_i_gc_bif2_jWtssd:
-	    case op_i_gc_bif3_jWtssd:
-		{
-		    const ErtsGcBif* p;
-		    BifFunction gcf = (BifFunction) *ap;
-		    for (p = erts_gc_bifs; p->bif != 0; p++) {
-			if (p->gc_bif == gcf) {
-			    print_bif_name(to, to_arg, p->bif);
-			    break;
-			}
-		    }
-		    if (p->bif == 0) {
-			erts_print(to, to_arg, "%d", (Uint)gcf);
-		    }
-		    break;
-		}
 	    case op_i_make_fun_Wt:
                 if (*sign == 'W') {
                     ErlFunEntry* fe = (ErlFunEntry *) *ap;
@@ -586,6 +592,7 @@ print_op(fmtfn_t to, void *to_arg, int op, int size, BeamInstr* addr)
                 }
                 break;
 	    case op_i_bs_match_string_xfWW:
+	    case op_i_bs_match_string_yfWW:
                 if (ap - first_arg < 3) {
                     erts_print(to, to_arg, "%d", *ap);
                 } else {
@@ -786,11 +793,14 @@ print_op(fmtfn_t to, void *to_arg, int op, int size, BeamInstr* addr)
 	    }
 	}
 	break;
-    case op_i_put_tuple_xI:
-    case op_i_put_tuple_yI:
+    case op_put_tuple2_xI:
+    case op_put_tuple2_yI:
     case op_new_map_dtI:
-    case op_update_map_assoc_sdtI:
-    case op_update_map_exact_jsdtI:
+    case op_update_map_assoc_xdtI:
+    case op_update_map_assoc_ydtI:
+    case op_update_map_assoc_cdtI:
+    case op_update_map_exact_xjdtI:
+    case op_update_map_exact_yjdtI:
 	{
 	    int n = unpacked[-1];
 

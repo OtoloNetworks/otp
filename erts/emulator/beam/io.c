@@ -3650,20 +3650,22 @@ typedef struct {
     Eterm reason;
 } ErtsPortExitContext;
 
-static void link_port_exit(ErtsLink *lnk, void *vpectxt)
+static int link_port_exit(ErtsLink *lnk, void *vpectxt, Sint reds)
 {
     ErtsPortExitContext *pectxt = vpectxt;
     erts_proc_sig_send_link_exit(NULL, pectxt->port_id,
                                  lnk, pectxt->reason, NIL);
+    return 1;
 }
 
-static void monitor_port_exit(ErtsMonitor *mon, void *vpectxt)
+static int monitor_port_exit(ErtsMonitor *mon, void *vpectxt, Sint reds)
 {
     ErtsPortExitContext *pectxt = vpectxt;
     if (erts_monitor_is_target(mon))
         erts_proc_sig_send_monitor_down(mon, pectxt->reason);
     else
         erts_proc_sig_send_demonitor(mon);
+    return 1;
 }
 
 /* 'from' is sending 'this_port' an exit signal, (this_port must be internal).
@@ -4079,7 +4081,7 @@ done:
  * to the caller.
  */
 int
-erl_drv_port_control(Eterm port_num, char cmd, char* buff, ErlDrvSizeT size)
+erl_drv_port_control(Eterm port_num, unsigned int cmd, char* buff, ErlDrvSizeT size)
 {
     ErtsProc2PortSigData *sigdp = erts_port_task_alloc_p2p_sig_data();
 
@@ -4454,6 +4456,7 @@ erts_port_call(Process* c_p,
     char input_buf[256];
     char *bufp;
     byte *endp;
+    Uint uintsz;
     ErlDrvSizeT size;
     int try_call;
     erts_aint32_t sched_flags;
@@ -4466,7 +4469,9 @@ erts_port_call(Process* c_p,
 
     try_call = !(sched_flags & ERTS_PTS_FLGS_FORCE_SCHEDULE_OP);
 
-    size = erts_encode_ext_size(data);
+    if (erts_encode_ext_size(data, &uintsz) != ERTS_EXT_SZ_OK)
+        return ERTS_PORT_OP_BADARG;
+    size = (ErlDrvSizeT) uintsz;
 
     if (!try_call)
 	bufp = erts_alloc(ERTS_ALC_T_DRV_CALL_DATA, size);
@@ -4842,7 +4847,7 @@ typedef struct {
     void *arg;
 } prt_one_lnk_data;
 
-static void prt_one_monitor(ErtsMonitor *mon, void *vprtd)
+static int prt_one_monitor(ErtsMonitor *mon, void *vprtd, Sint reds)
 {
     ErtsMonitorData *mdp = erts_monitor_to_data(mon);
     prt_one_lnk_data *prtd = (prt_one_lnk_data *) vprtd;
@@ -4850,12 +4855,14 @@ static void prt_one_monitor(ErtsMonitor *mon, void *vprtd)
         erts_print(prtd->to, prtd->arg, "(%p,%T)", mon->other.ptr, mdp->ref);
     else
         erts_print(prtd->to, prtd->arg, "(%T,%T)", mon->other.item, mdp->ref);
+    return 1;
 }
 
-static void prt_one_lnk(ErtsLink *lnk, void *vprtd)
+static int prt_one_lnk(ErtsLink *lnk, void *vprtd, Sint reds)
 {
     prt_one_lnk_data *prtd = (prt_one_lnk_data *) vprtd;
     erts_print(prtd->to, prtd->arg, "%T", lnk->other.item);
+    return 1;
 }
 
 static void dump_port_state(fmtfn_t to, void *arg, erts_aint32_t state)
@@ -5106,7 +5113,7 @@ erts_port_resume_procs(Port *prt)
 
 	    erts_snprintf(port_str, sizeof(DTRACE_CHARBUF_NAME(port_str)), "%T", prt->common.id);
 	    while (plp2 != NULL) {
-		erts_snprintf(pid_str, sizeof(DTRACE_CHARBUF_NAME(pid_str)), "%T", plp2->pid);
+		erts_snprintf(pid_str, sizeof(DTRACE_CHARBUF_NAME(pid_str)), "%T", plp2->u.pid);
 		DTRACE2(process_port_unblocked, pid_str, port_str);
 	    }
 	}
@@ -5297,44 +5304,31 @@ erts_get_port_names(Eterm id, ErlDrvPort drv_port)
 	pnp->driver_name = NULL;
     }
     else {
-	int do_realloc = 1;
-	int len = -1;
-	size_t pnp_len = sizeof(ErtsPortNames);
-#ifndef DEBUG
-	pnp_len += 100; /* In most cases 100 characters will be enough... */
-	ASSERT(prt->common.id == id);
-#endif
-	pnp = erts_alloc(ERTS_ALC_T_PORT_NAMES, pnp_len);
-	do {
-	    int nlen;
-	    char *name, *driver_name;
-	    if (len > 0) {
-		erts_free(ERTS_ALC_T_PORT_NAMES, pnp);
-		pnp_len = sizeof(ErtsPortNames) + len;
-		pnp = erts_alloc(ERTS_ALC_T_PORT_NAMES, pnp_len);
-	    }
-	    name = prt->name;
-	    len = nlen = name ? sys_strlen(name) + 1 : 0;
-	    driver_name = (prt->drv_ptr ? prt->drv_ptr->name : NULL);
-	    len += driver_name ? sys_strlen(driver_name) + 1 : 0;
-	    if (len <= pnp_len - sizeof(ErtsPortNames)) {
-		if (!name)
-		    pnp->name = NULL;
-		else {
-		    pnp->name = ((char *) pnp) + sizeof(ErtsPortNames);
-		    sys_strcpy(pnp->name, name);
-		}
-		if (!driver_name)
-		    pnp->driver_name = NULL;
-		else {
-		    pnp->driver_name = (((char *) pnp)
-					+ sizeof(ErtsPortNames)
-					+ nlen);
-		    sys_strcpy(pnp->driver_name, driver_name);
-		}
-		do_realloc = 0;
-	    }
-	} while (do_realloc);
+	int len;
+        int nlen;
+        char *driver_name;
+
+        len = nlen = prt->name ? sys_strlen(prt->name) + 1 : 0;
+        driver_name = (prt->drv_ptr ? prt->drv_ptr->name : NULL);
+        len += driver_name ? sys_strlen(driver_name) + 1 : 0;
+
+        pnp = erts_alloc(ERTS_ALC_T_PORT_NAMES,
+                         sizeof(ErtsPortNames) + len);
+
+        if (!prt->name)
+            pnp->name = NULL;
+        else {
+            pnp->name = ((char *) pnp) + sizeof(ErtsPortNames);
+            sys_strcpy(pnp->name, prt->name);
+        }
+        if (!driver_name)
+            pnp->driver_name = NULL;
+        else {
+            pnp->driver_name = (((char *) pnp)
+                                + sizeof(ErtsPortNames)
+                                + nlen);
+            sys_strcpy(pnp->driver_name, driver_name);
+        }
     }
     return pnp;
 }
@@ -6183,6 +6177,7 @@ int driver_output_binary(ErlDrvPort ix, char* hbuf, ErlDrvSizeT hlen,
 				dep,
                                 conn_id,
 				(byte*) hbuf, hlen,
+                                ErlDrvBinary2Binary(bin),
 				(byte*) (bin->orig_bytes+offs), len);
     }
     else
@@ -6228,12 +6223,14 @@ int driver_output2(ErlDrvPort ix, char* hbuf, ErlDrvSizeT hlen,
 				    dep,
                                     conn_id,
 				    NULL, 0,
+                                    NULL,
 				    (byte*) hbuf, hlen);
 	else
 	    return erts_net_message(prt,
 				    dep,
                                     conn_id,
 				    (byte*) hbuf, hlen,
+                                    NULL,
 				    (byte*) buf, len);
     }
     else if (state & ERTS_PORT_SFLG_LINEBUF_IO)

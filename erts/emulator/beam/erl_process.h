@@ -381,7 +381,10 @@ struct ErtsSchedulerSleepInfo_ {
 
 typedef struct ErtsProcList_ ErtsProcList;
 struct ErtsProcList_ {
-    Eterm pid;
+    union {
+        Eterm pid;
+        Process *p;
+    } u;
     Uint64 started_interval;
     ErtsProcList* next;
     ErtsProcList* prev;
@@ -638,6 +641,7 @@ struct ErtsSchedulerData_ {
     ErtsSchedType type;
     Uint no;			/* Scheduler number for normal schedulers */
     Uint dirty_no;  /* Scheduler number for dirty schedulers */
+    int flxctr_slot_no; /* slot nr when a flxctr is used */
     struct enif_environment_t *current_nif;
     Process *dirty_shadow_process;
     Port *current_port;
@@ -1319,9 +1323,6 @@ ERTS_GLB_INLINE void erts_heap_frag_shrink(Process* p, Eterm* hp)
 #endif /* inline */
 
 Eterm* erts_heap_alloc(Process* p, Uint need, Uint xtra);
-#ifdef CHECK_FOR_HOLES
-Eterm* erts_set_hole_marker(Eterm* ptr, Uint sz);
-#endif
 
 extern erts_rwmtx_t erts_cpu_bind_rwmtx;
 /* If any of the erts_system_monitor_* variables are set (enabled),
@@ -1580,7 +1581,7 @@ ERTS_GLB_INLINE int erts_proclist_is_last(ErtsProcList *, ErtsProcList *);
 ERTS_GLB_INLINE int
 erts_proclist_same(ErtsProcList *plp, Process *p)
 {
-    return (plp->pid == p->common.id
+    return ((plp->u.pid == p->common.id || plp->u.p == p)
 	    && (plp->started_interval
 		== p->common.u.alive.started_interval));
 }
@@ -1819,9 +1820,12 @@ Eterm erts_process_info(Process *c_p, ErtsHeapFactory *hfact,
 typedef struct {
     Process *c_p;
     Eterm reason;
+    ErtsLink *dist_links;
+    ErtsMonitor *dist_monitors;
+    Eterm dist_state;
 } ErtsProcExitContext;
-void erts_proc_exit_handle_monitor(ErtsMonitor *mon, void *vctxt);
-void erts_proc_exit_handle_link(ErtsLink *lnk, void *vctxt);
+int erts_proc_exit_handle_monitor(ErtsMonitor *mon, void *vctxt, Sint reds);
+int erts_proc_exit_handle_link(ErtsLink *lnk, void *vctxt, Sint reds);
 
 Eterm erts_get_process_priority(erts_aint32_t state);
 Eterm erts_set_process_priority(Process *p, Eterm prio);
@@ -1844,12 +1848,14 @@ int erts_resume_processes(ErtsProcList *);
 void erts_deep_process_dump(fmtfn_t, void *);
 
 Eterm erts_get_reader_groups_map(Process *c_p);
+Eterm erts_get_decentralized_counter_groups_map(Process *c_p);
 Eterm erts_debug_reader_groups_map(Process *c_p, int groups);
 
 Uint erts_debug_nbalance(void);
 
 #define ERTS_DEBUG_WAIT_COMPLETED_DEALLOCATIONS		(1 << 0)
 #define ERTS_DEBUG_WAIT_COMPLETED_TIMER_CANCELLATIONS	(1 << 1)
+#define ERTS_DEBUG_WAIT_COMPLETED_AUX_WORK		(1 << 2)
 
 int erts_debug_wait_completed(Process *c_p, int flags);
 
@@ -2346,6 +2352,8 @@ erts_try_change_runq_proc(Process *p, ErtsRunQueue *rq)
                                             old_rqint);
         if (act_rqint == old_rqint)
             return !0;
+
+        old_rqint = act_rqint;
     }
 }
 

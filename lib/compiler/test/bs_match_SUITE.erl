@@ -24,6 +24,7 @@
 -export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
 	 init_per_group/2,end_per_group/2,
 	 init_per_testcase/2,end_per_testcase/2,
+         verify_highest_opcode/1,
 	 size_shadow/1,int_float/1,otp_5269/1,null_fields/1,wiger/1,
 	 bin_tail/1,save_restore/1,
 	 partitioned_bs_match/1,function_clause/1,
@@ -40,8 +41,11 @@
 	 map_and_binary/1,unsafe_branch_caching/1,
 	 bad_literals/1,good_literals/1,constant_propagation/1,
 	 parse_xml/1,get_payload/1,escape/1,num_slots_different/1,
-         beam_bsm/1,guard/1,is_ascii/1,non_opt_eq/1,erl_689/1,
-         bs_start_match2_defs/1]).
+         beam_bsm/1,guard/1,is_ascii/1,non_opt_eq/1,
+         expression_before_match/1,erl_689/1,restore_on_call/1,
+         restore_after_catch/1,matches_on_parameter/1,big_positions/1,
+         matching_meets_apply/1,bs_start_match2_defs/1,
+         exceptions_after_match_failure/1]).
 
 -export([coverage_id/1,coverage_external_ignore/2]).
 
@@ -57,8 +61,9 @@ all() ->
     [{group,p}].
 
 groups() -> 
-    [{p,[parallel],
-      [size_shadow,int_float,otp_5269,null_fields,wiger,
+    [{p,[],
+      [verify_highest_opcode,
+       size_shadow,int_float,otp_5269,null_fields,wiger,
        bin_tail,save_restore,
        partitioned_bs_match,function_clause,unit,
        shared_sub_bins,bin_and_float,dec_subidentifiers,
@@ -73,8 +78,11 @@ groups() ->
        map_and_binary,unsafe_branch_caching,
        bad_literals,good_literals,constant_propagation,parse_xml,
        get_payload,escape,num_slots_different,
-       beam_bsm,guard,is_ascii,non_opt_eq,erl_689,
-       bs_start_match2_defs]}].
+       beam_bsm,guard,is_ascii,non_opt_eq,
+       expression_before_match,erl_689,restore_on_call,
+       matches_on_parameter,big_positions,
+       matching_meets_apply,bs_start_match2_defs,
+       exceptions_after_match_failure]}].
 
 
 init_per_suite(Config) ->
@@ -96,6 +104,20 @@ init_per_testcase(Case, Config) when is_atom(Case), is_list(Config) ->
 
 end_per_testcase(Case, Config) when is_atom(Case), is_list(Config) ->
     ok.
+
+verify_highest_opcode(_Config) ->
+    case ?MODULE of
+        bs_match_r21_SUITE ->
+            {ok,Beam} = file:read_file(code:which(?MODULE)),
+            case test_lib:highest_opcode(Beam) of
+                Highest when Highest =< 163 ->
+                    ok;
+                TooHigh ->
+                    ct:fail({too_high_opcode_for_21,TooHigh})
+            end;
+        _ ->
+            ok
+    end.
 
 size_shadow(Config) when is_list(Config) ->
     %% Originally OTP-5270.
@@ -250,6 +272,12 @@ bin_tail(Config) when is_list(Config) ->
     ok = bin_tail_e(<<2:2,1:1,1:5,42:64>>),
     error = bin_tail_e(<<3:2,1:1,1:5,42:64>>),
     error = bin_tail_e(<<>>),
+
+    MD5 = erlang:md5(<<42>>),
+    <<"abc">> = bin_tail_f(<<MD5/binary,"abc">>, MD5, 3),
+    error = bin_tail_f(<<MD5/binary,"abc">>, MD5, 999),
+    {'EXIT',{_,_}} = (catch bin_tail_f(<<0:16/unit:8>>, MD5, 0)),
+
     ok.
 
 bin_tail_c(Bin, Offset) ->
@@ -305,6 +333,14 @@ bin_tail_e_var(Bin) ->
 	%% bs_test_tail2 instructions are needed.
 	<<2:2,_:1,1:5,Tail/binary>> -> Tail;
 	_ -> error
+    end.
+
+bin_tail_f(Bin, MD5, Size) ->
+    case Bin of
+        <<MD5:16/binary, Tail:Size/binary>> ->
+            Tail;
+        <<MD5:16/binary, _/binary>> ->
+            error
     end.
 	    
 save_restore(Config) when is_list(Config) ->
@@ -457,6 +493,15 @@ unit(Config) when is_list(Config) ->
     127 = peek7(<<127:7>>),
     100 = peek7(<<100:7,19:7>>),
     fc(peek7, [<<1,2>>], catch peek7(<<1,2>>)),
+
+    1 = unit_opt(1, -1),
+    8 = unit_opt(8, -1),
+
+    <<1:32,"abc">> = unit_opt_2(<<1:32,"abc">>),
+    <<"def">> = unit_opt_2(<<2:32,"def">>),
+    {'EXIT',_} = (catch unit_opt_2(<<1:32,33:7>>)),
+    {'EXIT',_} = (catch unit_opt_2(<<2:32,55:7>>)),
+
     ok.
 
 peek1(<<B:8,_/bitstring>>) -> B.
@@ -466,6 +511,27 @@ peek7(<<B:7,_/binary-unit:7>>) -> B.
 peek8(<<B:8,_/binary>>) -> B.
 
 peek16(<<B:16,_/binary-unit:16>>) -> B.
+
+unit_opt(U, X) ->
+    %% Cover type analysis in beam_ssa_type.
+    Bin = case U of
+              1 -> <<X:7>>;
+              8 -> <<X>>
+          end,
+    %% The type of Bin will be set to {binary,gcd(1, 8)}.
+    case Bin of
+        <<_/binary-unit:8>> -> 8;
+        <<_/binary-unit:1>> -> 1
+    end.
+
+unit_opt_2(<<St:32,KO/binary>> = Bin0) ->
+    Bin = if
+              St =:= 1 ->
+                  Bin0;
+              St =:= 2 ->
+                  <<KO/binary>>
+          end,
+    id(Bin).
 
 shared_sub_bins(Config) when is_list(Config) ->
     {15,[<<>>,<<5>>,<<4,5>>,<<3,4,5>>,<<2,3,4,5>>]} = sum(<<1,2,3,4,5>>, [], 0),
@@ -694,6 +760,20 @@ coverage(Config) when is_list(Config) ->
     binary = coverage_bitstring(<<7>>),
     bitstring = coverage_bitstring(<<7:4>>),
     other = coverage_bitstring([a]),
+
+    %% Cover code in beam_trim.
+
+    {done,<<17,53>>,[253,155,200]} =
+        coverage_trim(<<253,155,200,17,53>>, e0, e1, e2, e3, []),
+
+    <<"(right|linux)">> = coverage_trim_1(<<"">>, <<"right">>, <<"linux">>),
+    <<"/(right|linux)">> = coverage_trim_1(<<"/">>, <<"right">>, <<"linux">>),
+    <<"(left|linux)/(right|linux)">> =
+        coverage_trim_1(<<"left">>, <<"right">>, <<"linux">>),
+
+    {10,<<"-">>,""} = coverage_trim_2(<<"-">>, 10, []),
+    {8,<<"-">>,"aa"} = coverage_trim_2(<<"aa-">>, 10, []),
+
     ok.
 
 coverage_fold(Fun, Acc, <<H,T/binary>>) ->
@@ -787,6 +867,37 @@ coverage_per_key(<<BinSize:32,Bin/binary>> = B) ->
 coverage_bitstring(Bin) when is_binary(Bin) -> binary;
 coverage_bitstring(<<_/bitstring>>) -> bitstring;
 coverage_bitstring(_) -> other.
+
+coverage_trim(<<C:8,T/binary>> = Bin, E0, E1, E2, E3, Acc) ->
+    case id(C > 128) of
+        true ->
+            coverage_trim(T, E0, E1, E2, E3, [C|Acc]);
+        false ->
+            {done,Bin,lists:reverse(Acc)}
+    end.
+
+coverage_trim_1(<<>>, Right, OsType) ->
+    do_coverage_trim_1(Right, OsType);
+coverage_trim_1(<<"/">>, Right, OsType) ->
+    <<"/",(do_coverage_trim_1(Right, OsType))/binary>>;
+coverage_trim_1(Left, Right, OsType) ->
+    <<(do_coverage_trim_1(Left, OsType))/binary,
+      "/",
+      (do_coverage_trim_1(Right, OsType))/binary>>.
+
+do_coverage_trim_1(A, OsType) ->
+    <<"(",A/binary,"|",OsType/binary,")">>.
+
+coverage_trim_2(<<C/utf8,R/binary>> = Bin, I, L) ->
+    case printable_char(C) of
+        true ->
+            coverage_trim_2(R, I - 1, [C | L]);
+        false ->
+            {I,Bin,lists:reverse(L)}
+    end.
+
+printable_char($a) -> true;
+printable_char(_) -> false.
 
 multiple_uses(Config) when is_list(Config) ->
     {344,62879,345,<<245,159,1,89>>} = multiple_uses_1(<<1,88,245,159,1,89>>),
@@ -1754,11 +1865,10 @@ do_erl_689_2b(_, <<Length, Data/binary>>) ->
 %% ERL-753
 
 bs_start_match2_defs(_Config) ->
-    {<<"http://127.0.0.1:1234/vsaas/hello">>} = api_url(<<"hello">>, dummy),
-    {"https://127.0.0.1:4321/vsaas/hello"} = api_url({https, "hello"}, dummy).
+    {<<"http://127.0.0.1:1234/vsaas/hello">>} = api_url(<<"hello">>),
+    {"https://127.0.0.1:4321/vsaas/hello"} = api_url({https, "hello"}).
 
-api_url(URL, Auth) ->
-    Header = [],
+api_url(URL) ->
     case URL of
         <<_/binary>> -> {<<"http://127.0.0.1:1234/vsaas/",URL/binary>>};
         {https, [_|_] = URL1} -> {"https://127.0.0.1:4321/vsaas/"++URL1}
@@ -1766,5 +1876,148 @@ api_url(URL, Auth) ->
 
 check(F, R) ->
     R = F().
+
+%% Make sure that an expression that comes between function start and a match
+%% expression passes validation.
+expression_before_match(Config) when is_list(Config) ->
+    <<_,R/binary>> = id(<<0,1,2,3>>),
+    {1, <<2,3>>} = expression_before_match_1(R),
+    ok.
+
+expression_before_match_1(R) ->
+    A = id(1),
+    case R of
+        <<1,Bar/binary>> -> {A, Bar};
+        <<>> -> {A, baz}
+    end.
+
+%% Make sure that context positions are updated on calls.
+restore_on_call(Config) when is_list(Config) ->
+    ok = restore_on_call_plain(<<0, 1, 2>>),
+    <<"x">> = restore_on_call_match(<<0, "x">>),
+    ok.
+
+restore_on_call_plain(<<0, Rest/binary>>) ->
+    <<2>> = restore_on_call_plain_1(Rest),
+    %% {badmatch, <<>>} on missing restore.
+    <<2>> = restore_on_call_plain_1(Rest),
+    ok.
+
+restore_on_call_plain_1(<<1, Rest/binary>>) -> Rest;
+restore_on_call_plain_1(Other) -> Other.
+
+%% Calls a function that moves the match context passed to it, and then matches
+%% on its result to confuse the reposition algorithm's success/fail logic.
+restore_on_call_match(<<0, Bin/binary>>) ->
+    case skip_until_zero(Bin) of
+        {skipped, Rest} ->
+            Rest;
+        not_found ->
+            %% The match context did not get repositioned before the
+            %% bs_get_tail instruction here.
+            Bin
+    end.
+
+skip_until_zero(<<0,Rest/binary>>) ->
+    {skipped, Rest};
+skip_until_zero(<<_C,Rest/binary>>) ->
+    skip_until_zero(Rest);
+skip_until_zero(_) ->
+    not_found.
+
+%% 'catch' must invalidate positions.
+restore_after_catch(Config) when is_list(Config) ->
+    <<0, 1>> = restore_after_catch_1(<<0, 1>>),
+    ok.
+
+restore_after_catch_1(<<A/binary>>) ->
+    try throw_after_byte(A) of
+        _ -> impossible
+    catch
+        throw:_Any ->
+            %% Will equal <<1>> if the bug is present.
+            A
+    end.
+
+throw_after_byte(<<_,_/binary>>) ->
+    throw(away).
+
+matches_on_parameter(Config) when is_list(Config) ->
+    %% This improves coverage for matching on "naked" parameters.
+    {<<"urka">>, <<"a">>} = matches_on_parameter_1(<<"gurka">>),
+    ok = (catch matches_on_parameter_2(<<"10001110101">>, 0)).
+
+matches_on_parameter_1(Bin) ->
+    <<"g", A/binary>> = Bin,
+    <<_,_,"rk", B/binary>> = Bin,
+    {A, B}.
+
+matches_on_parameter_2(Bin, Offset) ->
+    <<_:Offset, Bit:1, Rest/bits>> = Bin,
+    case bit_size(Rest) of
+        0 -> throw(ok);
+        _ -> [Bit | matches_on_parameter_2(Bin, Offset + 1)]
+    end.
+
+big_positions(Config) when is_list(Config) ->
+    %% This provides coverage for when match context positions no longer fit
+    %% into an immediate on 32-bit platforms.
+
+    A = <<0:((1 bsl 27) - 8), $A, 1:1, "gurka", $A>>,
+    B = <<0:((1 bsl 27) - 8), $B, "hello", $B>>,
+
+    {a,$A} = bp_start_match(A),
+    {b,$B} = bp_start_match(B),
+    {a,$A} = bp_getpos(A),
+    {b,$B} = bp_getpos(B),
+
+    ok.
+
+%% After the first iteration the context's position will no longer fit into an
+%% immediate. To improve performance the bs_start_match3 instruction will
+%% return a new context with an updated base position so that we won't have to
+%% resort to using bigints.
+bp_start_match(<<_:(1 bsl 27),T/bits>>) -> bp_start_match(T);
+bp_start_match(<<1:1,"gurka",A>>) -> {a,A};
+bp_start_match(<<"hello",B>>) -> {b,B}.
+
+%% This is a corner case where the above didn't work perfectly; if the position
+%% was _just_ small enough to fit into an immediate when bs_start_match3 was
+%% hit, but too large at bs_get_position, then it must be saved as a bigint.
+bp_getpos(<<_:((1 bsl 27) - 8),T/bits>>) -> bp_getpos(T);
+bp_getpos(<<A,1:1,"gurka",A>>) -> {a,A};
+bp_getpos(<<B,"hello",B>>) -> {b,B}.
+
+matching_meets_apply(_Config) ->
+    <<"abc">> = do_matching_meets_apply(<<"/abc">>, []),
+    42 = do_matching_meets_apply(<<"">>, {erlang,-42}),
+    100 = do_matching_meets_apply(no_binary, {erlang,-100}),
+    ok.
+
+do_matching_meets_apply(<<$/, Rest/binary>>, _Handler) ->
+    id(Rest);
+do_matching_meets_apply(<<_/binary>>=Name, never_matches_a) ->
+    %% Used to crash the compiler because variables in a remote
+    %% were not handled properly by beam_ssa_bsm.
+    Name:foo(gurka);
+do_matching_meets_apply(<<_/binary>>=Name, never_matches_b) ->
+    %% Another case of the above.
+    foo:Name(gurka);
+do_matching_meets_apply(_Bin, {Handler, State}) ->
+    %% Another case of the above.
+    Handler:abs(State).
+
+%% Exception handling was broken on the failure path of bs_start_match as
+%% beam_ssa_bsm accidentally cloned and renamed the ?BADARG_BLOCK.
+exceptions_after_match_failure(_Config) ->
+    {'EXIT', {badarith, _}} = (catch do_exceptions_after_match_failure(atom)),
+    ok = do_exceptions_after_match_failure(<<0, 1, "gurka">>),
+    ok = do_exceptions_after_match_failure(2.0).
+
+do_exceptions_after_match_failure(<<_A, _B, "gurka">>) ->
+    ok;
+do_exceptions_after_match_failure(Other) ->
+    Other / 2.0,
+    ok.
 
 id(I) -> I.

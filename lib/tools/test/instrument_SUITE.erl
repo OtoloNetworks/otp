@@ -77,6 +77,8 @@ allocations_ramv(Config) when is_list(Config) ->
 verify_allocations_disabled(_AllocType, Result) ->
     verify_allocations_disabled(Result).
 
+verify_allocations_disabled({ok, {_HistStart, _UnscannedBytes, Allocs}}) ->
+    true = Allocs =:= #{};
 verify_allocations_disabled({error, not_enabled}) ->
     ok.
 
@@ -91,6 +93,13 @@ verify_allocations_enabled(_AllocType, Result) ->
 verify_allocations_enabled({ok, {_HistStart, _UnscannedBytes, Allocs}}) ->
     true = Allocs =/= #{}.
 
+verify_allocations_output(#{}, {ok, {_, _, Allocs}}) when Allocs =:= #{} ->
+    %% This happens when the allocator is enabled but tagging is disabled. If
+    %% there's an error that causes Allocs to always be empty when enabled it
+    %% will be caught by verify_allocations_enabled.
+    ok;
+verify_allocations_output(#{}, {error, not_enabled}) ->
+    ok;
 verify_allocations_output(#{ histogram_start := HistStart,
                              histogram_width := HistWidth },
                     {ok, {HistStart, _UnscannedBytes, ByOrigin}}) ->
@@ -124,8 +133,6 @@ verify_allocations_output(#{ histogram_start := HistStart,
                     [BlockCount, GenTotalBlockCount])
     end,
 
-    ok;
-verify_allocations_output(#{}, {error, not_enabled}) ->
     ok.
 
 %% %% %% %% %% %%
@@ -214,7 +221,8 @@ verify_carriers_output(#{ histogram_start := HistStart,
             ct:fail("Carrier count is ~p, expected at least ~p (SBC).",
                 [CarrierCount, GenSBCCount]);
         CarrierCount >= GenSBCCount ->
-            ok
+            ct:pal("Found ~p carriers, required at least ~p (SBC)." ,
+                [CarrierCount, GenSBCCount])
     end,
 
     ok;
@@ -252,13 +260,18 @@ test_format(Options0, Gather, Verify) ->
 test_abort(Gather) ->
     %% There's no way for us to tell whether this actually aborted or ran to
     %% completion, but it might catch a few segfaults.
+    %% This testcase is mostly useful when run in an debug emulator as it needs
+    %% the modified reduction count to trigger the odd trap scenarios
     Runner = self(),
     Ref = make_ref(),
     spawn_opt(fun() ->
-                  [Gather({Type, SchedId, 1, 1, Ref}) ||
-                   Type <- erlang:system_info(alloc_util_allocators),
-                   SchedId <- lists:seq(0, erlang:system_info(schedulers))],
-                  Runner ! Ref
+                      [begin
+                           Ref2 = make_ref(),
+                           [Gather({Type, SchedId, 1, 1, Ref2}) ||
+                               Type <- erlang:system_info(alloc_util_allocators),
+                               SchedId <- lists:seq(0, erlang:system_info(schedulers))]
+                       end || _ <- lists:seq(1,100)],
+                      Runner ! Ref
               end, [{priority, max}]),
     receive
         Ref -> ok
@@ -292,9 +305,19 @@ start_slave(Args) ->
     MicroSecs = erlang:monotonic_time(),
     Name = "instr" ++ integer_to_list(MicroSecs),
     Pa = filename:dirname(code:which(?MODULE)),
-    {ok, Node} = test_server:start_node(list_to_atom(Name),
-                                        slave,
-                                        [{args, "-pa " ++ Pa ++ " " ++ Args}]),
+
+    %% We pass arguments through ZFLAGS as the nightly tests rotate
+    %% +Meamax/+Meamin which breaks the _enabled and _disabled tests unless
+    %% overridden.
+    ZFlags = os:getenv("ERL_ZFLAGS", ""),
+    {ok, Node} = try
+                     os:putenv("ERL_ZFLAGS", ZFlags ++ [" " | Args]),
+                     test_server:start_node(list_to_atom(Name),
+                                            slave,
+                                            [{args, "-pa " ++ Pa}])
+                 after
+                     os:putenv("ERL_ZFLAGS", ZFlags)
+                 end,
     Node.
 
 generate_test_blocks() ->
@@ -309,8 +332,9 @@ generate_test_blocks() ->
               MBCs = [<<I, 0:64/unit:8>> ||
                       I <- lists:seq(1, ?GENERATED_MBC_BLOCK_COUNT)],
               Runner ! Ref,
-              receive after infinity -> ok end,
-              unreachable ! {SBCs, MBCs}
+              receive
+                   gurka -> gaffel ! {SBCs, MBCs}
+              end
           end),
     receive
         Ref -> ok

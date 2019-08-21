@@ -101,8 +101,9 @@ init(File0) ->
     {ok,CdvServer} = crashdump_viewer:start_link(),
 
     catch wxSystemOptions:setOption("mac.listctrl.always_use_generic", 1),
+    Scale = observer_wx:get_scale(),
     Frame = wxFrame:new(wx:null(), ?wxID_ANY, "Crashdump Viewer",
-			[{size, {850, 600}}, {style, ?wxDEFAULT_FRAME_STYLE}]),
+			[{size, {Scale*850, Scale*600}}, {style, ?wxDEFAULT_FRAME_STYLE}]),
     IconFile = filename:join(code:priv_dir(observer), "erlang_observer.png"),
     Icon = wxIcon:new(IconFile, [{type,?wxBITMAP_TYPE_PNG}]),
     wxFrame:setIcon(Frame, Icon),
@@ -458,10 +459,7 @@ maybe_warn_filename(FileName) ->
         true ->
             continue;
         false ->
-            DumpName = case os:getenv("ERL_CRASH_DUMP") of
-                           false -> filename:absname("erl_crash.dump");
-                           Name -> filename:absname(Name)
-                       end,
+            DumpName = filename:absname(os:getenv("ERL_CRASH_DUMP", "erl_crash.dump")),
             case filename:absname(FileName) of
                 DumpName ->
                     Warning =

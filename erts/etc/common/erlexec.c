@@ -443,7 +443,6 @@ int main(int argc, char **argv)
     int process_args = 1;
     int print_args_exit = 0;
     int print_qouted_cmd_exit = 0;
-    erts_cpu_info_t *cpuinfo = NULL;
     char* emu_name;
 
 #ifdef __WIN32__
@@ -502,8 +501,6 @@ int main(int argc, char **argv)
     /*
      * Construct the path of the executable.
      */
-    cpuinfo = erts_cpu_info_create();
-
 #if defined(__WIN32__) && defined(WIN32_ALWAYS_DEBUG)
     emu_type = "debug";
 #endif
@@ -560,9 +557,6 @@ int main(int argc, char **argv)
 	}
 	i++;
     }
-
-    erts_cpu_info_destroy(cpuinfo);
-    cpuinfo = NULL;
 
     if (malloc_lib) {
 	if (strcmp(malloc_lib, "libc") != 0)
@@ -695,15 +689,6 @@ int main(int argc, char **argv)
 			start_detached = 1;
 			add_args("-noshell", "-noinput", NULL);
 		    }
-		    break;
-
-		  case 'i':
-		    if (strcmp(argv[i], "-instr") == 0) {
-			add_Eargs("-Mim");
-			add_Eargs("true");
-		    }
-		    else
-			add_arg(argv[i]);
 		    break;
 
 		  case 'e':
@@ -854,10 +839,8 @@ int main(int argc, char **argv)
 
 	      case '+':
 		switch (argv[i][1]) {
-		  case '#':
 		  case 'a':
 		  case 'A':
-		  case 'b':
 		  case 'C':
 		  case 'e':
 		  case 'i':

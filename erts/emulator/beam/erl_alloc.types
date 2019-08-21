@@ -30,10 +30,10 @@
 #   name space).
 # * Types, allocators, classes, and descriptions have different name
 #   spaces.
-# * The type, allocator, and class names INVALID are reserved and can
-#   not be used.
+# * The type, allocator, and class names INVALID are reserved and
+#   cannot be used.
 # * The descriptions invalid_allocator, invalid_class, and invalid_type
-#   are reserved and can not be used.
+#   are reserved and cannot be used.
 # * Declarations can be done conditionally by use of a
 #     +if <boolean_variable>
 #
@@ -275,11 +275,14 @@ type	ML_DIST		STANDARD	SYSTEM		monitor_link_dist
 type	PF3_ARGS	SHORT_LIVED	PROCESSES	process_flag_3_arguments
 type	SETUP_CONN_ARG	SHORT_LIVED	PROCESSES	setup_connection_argument
 type    LIST_TRAP       SHORT_LIVED     PROCESSES       list_bif_trap_state
+type    CONT_EXIT_TRAP  SHORT_LIVED     PROCESSES       continue_exit_trap_state
+type    SEQ_YIELD_STATE SHORT_LIVED     SYSTEM          dist_seq_yield_state
 
 type	ENVIRONMENT	SYSTEM		SYSTEM		environment
 
 type	PERSISTENT_TERM	LONG_LIVED	CODE		persisten_term
 type	PERSISTENT_LOCK_Q SHORT_LIVED	SYSTEM		persistent_lock_q
+type	PERSISTENT_TERM_TMP SHORT_LIVED	SYSTEM		persistent_term_tmp_table
 
 #
 # Types used for special emulators
@@ -345,16 +348,17 @@ type	COUNTERS	STANDARD	SYSTEM		erl_bif_counters
 # Types used by system specific code
 #
 
-type  	TEMP_TERM 	TEMPORARY	SYSTEM		temp_term
-type	DRV_TAB		LONG_LIVED	SYSTEM		drv_tab
-type	DRV_EV_STATE	LONG_LIVED	SYSTEM		driver_event_state
-type	DRV_SEL_D_STATE	FIXED_SIZE	SYSTEM		driver_select_data_state
-type	NIF_SEL_D_STATE	FIXED_SIZE	SYSTEM		enif_select_data_state
-type	POLLSET		LONG_LIVED	SYSTEM		pollset
-type	POLLSET_UPDREQ	SHORT_LIVED	SYSTEM		pollset_update_req
-type	POLL_FDS	LONG_LIVED	SYSTEM		poll_fds
-type	FD_STATUS	LONG_LIVED	SYSTEM		fd_status
-type	SELECT_FDS	LONG_LIVED	SYSTEM		select_fds
+type  	TEMP_TERM       	TEMPORARY	SYSTEM		temp_term
+type  	SHORT_LIVED_TERM 	SHORT_LIVED	SYSTEM		short_lived_term
+type	DRV_TAB		        LONG_LIVED	SYSTEM		drv_tab
+type	DRV_EV_STATE	        LONG_LIVED	SYSTEM		driver_event_state
+type	DRV_SEL_D_STATE	        FIXED_SIZE	SYSTEM		driver_select_data_state
+type	NIF_SEL_D_STATE	        FIXED_SIZE	SYSTEM		enif_select_data_state
+type	POLLSET		        LONG_LIVED	SYSTEM		pollset
+type	POLLSET_UPDREQ	        SHORT_LIVED	SYSTEM		pollset_update_req
+type	POLL_FDS	        LONG_LIVED	SYSTEM		poll_fds
+type	FD_STATUS	        LONG_LIVED	SYSTEM		fd_status
+type	SELECT_FDS	        LONG_LIVED	SYSTEM		select_fds
 
 +if unix
 

@@ -113,6 +113,9 @@ extern Eterm erts_bld_resource_ref(Eterm** hp, ErlOffHeap*, ErtsResource*);
 extern void erts_pre_nif(struct enif_environment_t*, Process*,
 			 struct erl_module_nif*, Process* tracee);
 extern void erts_post_nif(struct enif_environment_t* env);
+#ifdef DEBUG
+int erts_dbg_is_resource_dying(ErtsResource*);
+#endif
 extern void erts_resource_stop(ErtsResource*, ErlNifEvent, int is_direct_call);
 void erts_fire_nif_monitor(ErtsMonitor *tmon);
 void erts_nif_demonitored(ErtsResource* resource);
@@ -131,6 +134,7 @@ extern Eterm erts_nif_call_function(Process *p, Process *tracee,
 
 int erts_call_dirty_nif(ErtsSchedulerData *esdp, Process *c_p,
 			BeamInstr *I, Eterm *reg);
+ErtsMessage* erts_create_message_from_nif_env(ErlNifEnv* msg_env);
 
 
 /* Driver handle (wrapper for old plain handle) */
@@ -292,7 +296,6 @@ union erl_off_heap_ptr {
 /* controls warning mapping in error_logger */
 
 extern Eterm node_cookie;
-extern Uint display_items;	/* no of items to display in traces etc */
 
 extern int erts_backtrace_depth;
 extern erts_atomic32_t erts_max_gen_gcs;
@@ -892,6 +895,11 @@ void erts_init_bif(void);
 Eterm erl_send(Process *p, Eterm to, Eterm msg);
 int erts_set_group_leader(Process *proc, Eterm new_gl);
 
+/* erl_bif_guard.c */
+
+void erts_init_bif_guard(void);
+Eterm erts_trapping_length_1(Process* p, Eterm* args);
+
 /* erl_bif_op.c */
 
 Eterm erl_is_function(Process* p, Eterm arg1, Eterm arg2);
@@ -962,7 +970,7 @@ void init_break_handler(void);
 void erts_set_ignore_break(void);
 void erts_replace_intr(void);
 void process_info(fmtfn_t, void *);
-void print_process_info(fmtfn_t, void *, Process*);
+void print_process_info(fmtfn_t, void *, Process*, ErtsProcLocks);
 void info(fmtfn_t, void *);
 void loaded(fmtfn_t, void *);
 void erts_print_base64(fmtfn_t to, void *to_arg, byte* src, Uint size);
@@ -1088,7 +1096,7 @@ extern int distribution_info(fmtfn_t, void *);
 extern int is_node_name_atom(Eterm a);
 
 extern int erts_net_message(Port *, DistEntry *, Uint32 conn_id,
-			    byte *, ErlDrvSizeT, byte *, ErlDrvSizeT);
+			    byte *, ErlDrvSizeT, Binary *, byte *, ErlDrvSizeT);
 
 extern void init_dist(void);
 extern int stop_dist(void);
@@ -1208,10 +1216,11 @@ Uint64 erts_timestamp_millis(void);
 
 Export* erts_find_function(Eterm, Eterm, unsigned int, ErtsCodeIndex);
 
-void *erts_calc_stacklimit(char *prev_c, UWord stacksize);
-int erts_check_below_limit(char *ptr, char *limit);
-int erts_check_above_limit(char *ptr, char *limit);
-void *erts_ptr_id(void *ptr);
+/* ERTS_NOINLINE prevents link-time optimization across modules */
+void *erts_calc_stacklimit(char *prev_c, UWord stacksize) ERTS_NOINLINE;
+int erts_check_below_limit(char *ptr, char *limit) ERTS_NOINLINE;
+int erts_check_above_limit(char *ptr, char *limit) ERTS_NOINLINE;
+void *erts_ptr_id(void *ptr) ERTS_NOINLINE;
 
 Eterm store_external_or_ref_in_proc_(Process *, Eterm);
 Eterm store_external_or_ref_(Uint **, ErlOffHeap*, Eterm);
@@ -1303,14 +1312,7 @@ Sint intlist_to_buf(Eterm, char*, Sint); /* most callers pass plain char*'s */
 int erts_unicode_list_to_buf(Eterm list, byte *buf, Sint len, Sint* written);
 Sint erts_unicode_list_to_buf_len(Eterm list);
 
-struct Sint_buf {
-#if defined(ARCH_64)
-    char s[22];
-#else
-    char s[12];
-#endif
-};	
-char* Sint_to_buf(Sint, struct Sint_buf*);
+int Sint_to_buf(Sint num, int base, char **buf_p, size_t buf_size);
 
 #define ERTS_IOLIST_STATE_INITER(C_P, OBJ)	\
     {(C_P), 0, 0, (OBJ), {NULL, NULL, NULL, ERTS_ALC_T_INVALID}, 0, 0}

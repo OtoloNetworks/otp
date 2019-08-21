@@ -2191,6 +2191,9 @@ unc_paths(Config) when is_list(Config) ->
             {ok, _} = file:read_file_info("C:\\Windows\\explorer.exe"),
             {ok, _} = file:read_file_info("\\\\localhost\\c$\\Windows\\explorer.exe"),
 
+            {ok, Files} = file:list_dir("C:\\Windows\\"),
+            {ok, Files} = file:list_dir("\\\\localhost\\c$\\Windows\\"),
+
             {ok, Cwd} = file:get_cwd(),
 
             try
@@ -3741,19 +3744,33 @@ otp_10852(Config) when is_list(Config) ->
     ok = rpc_call(Node, read_file, [B]),
     ok = rpc_call(Node, make_link, [B,B]),
     case rpc_call(Node, make_symlink, [B,B]) of
-	ok -> ok;
-	{error, E} when (E =:= enotsup) or (E =:= eperm) ->
-	    {win32,_} = os:type()
+        {error, eilseq} ->
+            %% Some versions of OS X refuse to create files with illegal names.
+            {unix,darwin} = os:type();
+        {error, eperm} ->
+            %% The test user might not have permission to create symlinks.
+            {win32,_} = os:type();
+        ok ->
+            ok
     end,
     ok = rpc_call(Node, delete, [B]),
-    ok = rpc_call(Node, make_dir, [B]),
+    case rpc_call(Node, make_dir, [B]) of
+        {error, eilseq} ->
+            {unix,darwin} = os:type();
+        ok ->
+            ok
+    end,
     ok = rpc_call(Node, del_dir, [B]),
-    ok = rpc_call(Node, write_file, [B,B]),
-    {ok, Fd} = rpc_call(Node, open, [B,[read]]),
-    ok = rpc_call(Node, close, [Fd]),
-    {ok,0} = rpc_call(Node, copy, [B,B]),
-    {ok, Fd2, B} = rpc_call(Node, path_open, [["."], B, [read]]),
-    ok = rpc_call(Node, close, [Fd2]),
+    case rpc_call(Node, write_file, [B,B]) of
+        {error, eilseq} ->
+            {unix,darwin} = os:type();
+        ok ->
+            {ok, Fd} = rpc_call(Node, open, [B,[read]]),
+            ok = rpc_call(Node, close, [Fd]),
+            {ok,0} = rpc_call(Node, copy, [B,B]),
+            {ok, Fd2, B} = rpc_call(Node, path_open, [["."], B, [read]]),
+            ok = rpc_call(Node, close, [Fd2])
+    end,
     true = test_server:stop_node(Node),
     ok.
 
@@ -4497,15 +4514,18 @@ run_large_file_test(Config, Run, Name) ->
 	{{unix,sunos},OsVersion} when OsVersion < {5,5,1} ->
 	    {skip,"Only supported on Win32, Unix or SunOS >= 5.5.1"};
 	{{unix,_},_} ->
-	    N = disc_free(proplists:get_value(priv_dir, Config)),
-	    io:format("Free disk: ~w KByte~n", [N]),
-	    if N < 5 * (1 bsl 20) ->
-		    %% Less than 5 GByte free
-		    {skip,"Less than 5 GByte free"};
-	       true ->
-		    do_run_large_file_test(Config, Run, Name)
-	    end;
-	_ -> 
+            case disc_free(proplists:get_value(priv_dir, Config)) of
+                error ->
+                    {skip, "Failed to query disk space for priv_dir. "
+                           "Is it on a remote file system?~n"};
+                N when N >= 5 * (1 bsl 20) ->
+                    ct:pal("Free disk: ~w KByte~n", [N]),
+                    do_run_large_file_test(Config, Run, Name);
+                N when N < 5 * (1 bsl 20) ->
+                    ct:pal("Free disk: ~w KByte~n", [N]),
+                    {skip,"Less than 5 GByte free"}
+            end;
+	_ ->
 	    {skip,"Only supported on Win32, Unix or SunOS >= 5.5.1"}
     end.
 
@@ -4539,12 +4559,18 @@ do_run_large_file_test(Config, Run, Name0) ->
 
 disc_free(Path) ->
     Data = disksup:get_disk_data(),
-    {_,Tot,Perc} = hd(lists:filter(
-			fun({P,_Size,_Full}) ->
-				lists:prefix(filename:nativename(P),
-					     filename:nativename(Path))
-			end, lists:reverse(lists:sort(Data)))),
-    round(Tot * (1-(Perc/100))).
+
+    %% What partitions could Data be mounted on?
+    Partitions =
+        [D || {P, _Tot, _Perc}=D <- Data,
+         lists:prefix(filename:nativename(P), filename:nativename(Path))],
+
+    %% Sorting in descending order places the partition with the most specific
+    %% path first.
+    case lists:sort(fun erlang:'>='/2, Partitions) of
+        [{_,Tot, Perc} | _] -> round(Tot * (1-(Perc/100)));
+        [] -> error
+    end.
 
 memsize() ->
     {Tot,_Used,_}  = memsup:get_memory_data(),

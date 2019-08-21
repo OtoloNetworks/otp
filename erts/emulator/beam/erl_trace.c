@@ -72,6 +72,7 @@ static ErtsTracer default_port_tracer;
 
 static Eterm system_monitor;
 static Eterm system_profile;
+static erts_atomic_t system_logger;
 
 #ifdef HAVE_ERTS_NOW_CPU
 int erts_cpu_timestamp;
@@ -340,6 +341,7 @@ void erts_init_trace(void) {
     default_port_trace_flags = F_INITIAL_TRACE_FLAGS;
     default_port_tracer = erts_tracer_nil;
     system_seq_tracer = erts_tracer_nil;
+    erts_atomic_init_nob(&system_logger, am_logger);
     init_sys_msg_dispatcher();
     init_tracer_nif();
 }
@@ -633,9 +635,11 @@ write_sys_msg_to_port(Eterm unused_to,
 		      Eterm message) {
     byte *buffer;
     byte *ptr;
-    unsigned size;
+    Uint size;
 
-    size = erts_encode_ext_size(message);
+    if (erts_encode_ext_size(message, &size) != ERTS_EXT_SZ_OK)
+	erts_exit(ERTS_ERROR_EXIT, "Internal error: System limit\n");
+
     buffer = (byte *) erts_alloc(ERTS_ALC_T_TMP, size);
 
     ptr = buffer;
@@ -2027,10 +2031,24 @@ enqueue_sys_msg(enum ErtsSysMsgType type,
     erts_mtx_unlock(&smq_mtx);
 }
 
+Eterm
+erts_get_system_logger(void)
+{
+    return (Eterm)erts_atomic_read_nob(&system_logger);
+}
+
+Eterm
+erts_set_system_logger(Eterm logger)
+{
+    if (logger != am_logger && logger != am_undefined && !is_internal_pid(logger))
+        return THE_NON_VALUE;
+    return (Eterm)erts_atomic_xchg_nob(&system_logger, logger);
+}
+
 void
 erts_queue_error_logger_message(Eterm from, Eterm msg, ErlHeapFragment *bp)
 {
-    enqueue_sys_msg(SYS_MSG_TYPE_ERRLGR, from, am_logger, msg, bp);
+    enqueue_sys_msg(SYS_MSG_TYPE_ERRLGR, from, erts_get_system_logger(), msg, bp);
 }
 
 void
@@ -2271,7 +2289,7 @@ sys_msg_dispatcher_func(void *unused)
 		}
 		break;
 	    case SYS_MSG_TYPE_ERRLGR:
-		receiver = am_logger;
+		receiver = smqp->to;
 		break;
 	    default:
 		receiver = NIL;
@@ -2285,8 +2303,15 @@ sys_msg_dispatcher_func(void *unused)
 	    if (is_internal_pid(receiver)) {
 		proc = erts_pid2proc(NULL, 0, receiver, proc_locks);
 		if (!proc) {
-		    /* Bad tracer */
-		    goto failure;
+                    if (smqp->type == SYS_MSG_TYPE_ERRLGR) {
+                        /* Bad logger process, send to kernel 'logger' process */
+                        erts_set_system_logger(am_logger);
+                        receiver = erts_get_system_logger();
+                        goto logger;
+                    } else {
+                        /* Bad tracer */
+                        goto failure;
+                    }
 		}
 		else {
 		    ErtsMessage *mp;
@@ -2299,9 +2324,9 @@ sys_msg_dispatcher_func(void *unused)
 #endif
 		    erts_proc_unlock(proc, proc_locks);
 		}
-	    }
-	    else if (receiver == am_logger) {
-		proc = erts_whereis_process(NULL,0,receiver,proc_locks,0);
+	    } else if (receiver == am_logger) {
+            logger:
+		proc = erts_whereis_process(NULL,0,am_logger,proc_locks,0);
 		if (!proc)
 		    goto failure;
 		else if (smqp->from == proc->common.id)
@@ -2309,7 +2334,10 @@ sys_msg_dispatcher_func(void *unused)
 		else
 		    goto queue_proc_msg;
 	    }
-	    else if (is_internal_port(receiver)) {
+            else if (receiver == am_undefined) {
+                goto drop_sys_msg;
+	    }
+            else if (is_internal_port(receiver)) {
 		port = erts_thr_id2port_sflgs(receiver,
 					      ERTS_PORT_SFLGS_INVALID_TRACER_LOOKUP);
 		if (!port)
@@ -2366,7 +2394,7 @@ erts_foreach_sys_msg_in_q(void (*func)(Eterm,
 	    to = erts_get_system_profile();
 	    break;
 	case SYS_MSG_TYPE_ERRLGR:
-	    to = am_logger;
+	    to = erts_get_system_logger();
 	    break;
 	default:
 	    to = NIL;

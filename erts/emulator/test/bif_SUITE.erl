@@ -37,7 +37,9 @@
          group_leader_prio/1, group_leader_prio_dirty/1,
          is_process_alive/1,
          process_info_blast/1,
-         os_env_case_sensitivity/1]).
+         os_env_case_sensitivity/1,
+         test_length/1,
+         fixed_apply_badarg/1]).
 
 suite() ->
     [{ct_hooks,[ts_install_cth]},
@@ -52,7 +54,8 @@ all() ->
      erl_crash_dump_bytes, min_max, erlang_halt, is_builtin,
      error_stacktrace, error_stacktrace_during_call_trace,
      group_leader_prio, group_leader_prio_dirty,
-     is_process_alive, process_info_blast, os_env_case_sensitivity].
+     is_process_alive, process_info_blast, os_env_case_sensitivity,
+     test_length,fixed_apply_badarg].
 
 %% Uses erlang:display to test that erts_printf does not do deep recursion
 display(Config) when is_list(Config) ->
@@ -609,6 +612,16 @@ binary_to_existing_atom(Config) when is_list(Config) ->
 
     UnlikelyAtom = binary_to_atom(id(UnlikelyBin), latin1),
     UnlikelyAtom = binary_to_existing_atom(UnlikelyBin, latin1),
+
+    %% ERL-944; a binary that was too large would overflow the latin1-to-utf8
+    %% conversion buffer.
+    OverflowAtom = <<0:511/unit:8,
+                     196, 133, 196, 133, 196, 133, 196, 133, 196, 133,
+                     196, 133, 196, 133, 196, 133, 196, 133, 196, 133,
+                     196, 133, 196, 133, 196, 133, 196, 133, 196, 133,
+                     196, 133, 196, 133, 196, 133, 196, 133, 196, 133>>,
+    {'EXIT', _} = (catch binary_to_existing_atom(OverflowAtom, latin1)),
+
     ok.
 
 
@@ -1181,7 +1194,70 @@ consume_msgs() ->
     after 0 ->
               ok
     end.
-                              
+
+%% Test that length/1 returns the correct result after trapping, and
+%% also that the argument is correct in the stacktrace for a badarg
+%% exception.
+
+test_length(_Config) ->
+    {Start,Inc} = case test_server:timetrap_scale_factor() of
+                      1 -> {16*4000,3977};
+                      _ -> {100,1}
+            end,
+    Good = lists:reverse(lists:seq(1, Start)),
+    Bad = Good ++ [bad|cons],
+    test_length(Start, 10*Start, Inc, Good, Bad),
+
+    %% Test that calling length/1 from a match spec works.
+    MsList = lists:seq(1, 2*Start),
+    MsInput = [{tag,Good},{tag,MsList}],
+    Ms0 = [{{tag,'$1'},[{'>',{length,'$1'},Start}],['$1']}],
+    Ms = ets:match_spec_compile(Ms0),
+    [MsList] = ets:match_spec_run(MsInput, Ms),
+    ok.
+
+test_length(I, N, Inc, Good, Bad) when I < N ->
+    Length = id(length),
+    I = length(Good),
+    I = erlang:Length(Good),
+
+    %% Test length/1 in guards.
+    if
+        length(Good) =:= I ->
+            ok
+    end,
+    if
+        length(Bad) =:= I ->
+            error(should_fail);
+        true ->
+            ok
+    end,
+
+    {'EXIT',{badarg,[{erlang,length,[[I|_]],_}|_]}} = (catch length(Bad)),
+    {'EXIT',{badarg,[{erlang,length,[[I|_]],_}|_]}} = (catch erlang:Length(Bad)),
+    IncSeq = lists:seq(I + 1, I + Inc),
+    test_length(I+Inc, N, Inc,
+                lists:reverse(IncSeq, Good),
+                lists:reverse(IncSeq, Bad));
+test_length(_, _, _, _, _) -> ok.
+
+%% apply/3 with a fixed number of arguments didn't include all arguments on
+%% badarg exceptions.
+fixed_apply_badarg(Config) when is_list(Config) ->
+    Bad = id({}),
+
+    {'EXIT',{badarg, [{erlang,apply,[{},baz,[a,b]],[]} | _]}} =
+        (catch Bad:baz(a,b)),
+    {'EXIT',{badarg, [{erlang,apply,[baz,{},[c,d]],[]} | _]}} =
+        (catch baz:Bad(c,d)),
+
+    {'EXIT',{badarg, [{erlang,apply,[{},baz,[e,f]],[]} | _]}} =
+        (catch apply(Bad,baz,[e,f])),
+    {'EXIT',{badarg, [{erlang,apply,[baz,{},[g,h]],[]} | _]}} =
+        (catch apply(baz,Bad,[g,h])),
+
+    ok.
+
 %% helpers
     
 id(I) -> I.

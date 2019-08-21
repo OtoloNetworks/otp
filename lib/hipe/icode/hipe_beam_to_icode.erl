@@ -557,32 +557,21 @@ trans_fun([{move,Src,Dst}|Instructions], Env) ->
   Dst1 = mk_var(Dst),
   Src1 = trans_arg(Src),
   [hipe_icode:mk_move(Dst1,Src1) | trans_fun(Instructions,Env)];
-%%--- catch --- ITS PROCESSING IS POSTPONED
-trans_fun([{'catch',N,{_,EndLabel}}|Instructions], Env) ->
-  NewContLbl = mk_label(new),
-  [{'catch',N,EndLabel},NewContLbl | trans_fun(Instructions,Env)];
-%%--- catch_end --- ITS PROCESSING IS POSTPONED
-trans_fun([{catch_end,_N}=I|Instructions], Env) ->
-  [I | trans_fun(Instructions,Env)];
-%%--- try --- ITS PROCESSING IS POSTPONED
-trans_fun([{'try',N,{_,EndLabel}}|Instructions], Env) ->
-  NewContLbl = mk_label(new),
-  [{'try',N,EndLabel},NewContLbl | trans_fun(Instructions,Env)];
-%%--- try_end ---
-trans_fun([{try_end,_N}|Instructions], Env) ->
-  [hipe_icode:mk_end_try() | trans_fun(Instructions,Env)];
-%%--- try_case --- ITS PROCESSING IS POSTPONED
-trans_fun([{try_case,_N}=I|Instructions], Env) ->
-  [I | trans_fun(Instructions,Env)];
-%%--- try_case_end ---
-trans_fun([{try_case_end,Arg}|Instructions], Env) ->
-  BadArg = trans_arg(Arg),
-  ErrVar = mk_var(new),
-  Vs = [mk_var(new)],
-  Atom = hipe_icode:mk_move(ErrVar,hipe_icode:mk_const(try_clause)),
-  Tuple = hipe_icode:mk_primop(Vs,mktuple,[ErrVar,BadArg]),
-  Fail = hipe_icode:mk_fail(Vs,error),
-  [Atom,Tuple,Fail | trans_fun(Instructions,Env)];
+%%
+%% try/catch -- THESE ARE KNOWN TO MISCOMPILE, SEE OTP-15949
+%%
+trans_fun([{'catch'=Name,_,_}|_], _Env) ->
+  nyi(Name);
+trans_fun([{catch_end=Name,_}|_], _Env) ->
+  nyi(Name);
+trans_fun([{'try'=Name,_,_}|_], _Env) ->
+  nyi(Name);
+trans_fun([{try_end=Name,_}|_], _Env) ->
+  nyi(Name);
+trans_fun([{try_case=Name,_}|_], _Env) ->
+  nyi(Name);
+trans_fun([{try_case_end=Name,_}|_], _Env) ->
+  nyi(Name);
 %%--- raise ---
 trans_fun([{raise,{f,0},[Reg1,Reg2],{x,0}}|Instructions], Env) ->
   V1 = trans_arg(Reg1),
@@ -647,6 +636,13 @@ trans_fun([{put_tuple,_Size,Reg}|Instructions], Env) ->
   Primop = hipe_icode:mk_primop(Dest,mktuple,Src),
   Moves ++ [Primop | trans_fun(Instructions2,Env2)];
 %%--- put --- SHOULD NOT REALLY EXIST HERE; put INSTRUCTIONS ARE HANDLED ABOVE.
+%%--- put_tuple2 ---
+trans_fun([{put_tuple2,Reg,{list,Elements}}|Instructions], Env) ->
+  Dest = [mk_var(Reg)],
+  {Moves,Vars,Env2} = trans_elements(Elements, [], [], Env),
+  Src = lists:reverse(Vars),
+  Primop = hipe_icode:mk_primop(Dest, mktuple, Src),
+  Moves ++ [Primop | trans_fun(Instructions, Env2)];
 %%--- badmatch ---
 trans_fun([{badmatch,Arg}|Instructions], Env) ->
   BadVar = trans_arg(Arg),
@@ -1139,9 +1135,10 @@ trans_fun([{test,has_map_fields,{f,Lbl},Map,{list,Keys}}|Instructions], Env) ->
 		    lists:flatten([[K, {r, 0}] || K <- Keys])),
   [MapMove, TestInstructions | trans_fun(Instructions, Env2)];
 trans_fun([{get_map_elements,{f,Lbl},Map,{list,KVPs}}|Instructions], Env) ->
+  KVPs1 = overwrite_map_last(Map, KVPs),
   {MapMove, MapVar, Env1} = mk_move_and_var(Map, Env),
   {TestInstructions, GetInstructions, Env2} =
-    trans_map_query(MapVar, map_label(Lbl), Env1, KVPs),
+    trans_map_query(MapVar, map_label(Lbl), Env1, KVPs1),
   [MapMove, TestInstructions, GetInstructions | trans_fun(Instructions, Env2)];
 %%--- put_map_assoc ---
 trans_fun([{put_map_assoc,{f,Lbl},Map,Dst,_N,{list,Pairs}}|Instructions], Env) ->
@@ -1181,12 +1178,30 @@ trans_fun([raw_raise|Instructions], Env) ->
   [hipe_icode:mk_primop(Dst,raw_raise,Vars) |
    trans_fun(Instructions, Env)];
 %%--------------------------------------------------------------------
+%% New binary matching added in OTP 22.
+%%--------------------------------------------------------------------
+%%--- bs_get_tail ---
+trans_fun([{bs_get_tail=Name,_,_,_}|_Instructions], _Env) ->
+  nyi(Name);
+%%--- bs_start_match3 ---
+trans_fun([{bs_start_match3=Name,_,_,_,_}|_Instructions], _Env) ->
+  nyi(Name);
+%%--- bs_get_position ---
+trans_fun([{bs_get_position=Name,_,_,_}|_Instructions], _Env) ->
+  nyi(Name);
+%%--- bs_set_position ---
+trans_fun([{bs_set_position=Name,_,_}|_Instructions], _Env) ->
+  nyi(Name);
+%%--------------------------------------------------------------------
 %%--- ERROR HANDLING ---
 %%--------------------------------------------------------------------
 trans_fun([X|_], _) ->
   ?EXIT({'trans_fun/2',X});
 trans_fun([], _) ->
   [].
+
+nyi(Name) ->
+  throw({unimplemented_instruction,Name}).
 
 %%--------------------------------------------------------------------
 %% trans_call and trans_enter generate correct Icode calls/tail-calls,
@@ -1563,6 +1578,21 @@ trans_type_test2(function2, Lbl, Arg, Arity, Env) ->
 			 hipe_icode:label_name(True), map_label(Lbl)),
   {[Move1,Move2,I,True],Env2}.
 
+
+%%
+%% Makes sure that if a get_map_elements instruction will overwrite
+%% the map source, it will be done last.
+%%
+overwrite_map_last(Map, KVPs) ->
+  overwrite_map_last2(Map, KVPs, []).
+
+overwrite_map_last2(Map, [Key,Map|KVPs], _Last) ->
+  overwrite_map_last2(Map, KVPs, [Key,Map]);
+overwrite_map_last2(Map, [Key,Val|KVPs], Last) ->
+  [Key,Val|overwrite_map_last2(Map, KVPs, Last)];
+overwrite_map_last2(_Map, [], Last) ->
+  Last.
+
 %%
 %% Handles the get_map_elements instruction and the has_map_fields
 %% test instruction.
@@ -1682,6 +1712,19 @@ trans_puts([{put,X}|Code], Vars, Moves, Env) ->
   end;
 trans_puts(Code, Vars, Moves, Env) ->    %% No more put operations
   {Moves, Code, Vars, Env}.
+
+trans_elements([X|Code], Vars, Moves, Env) ->
+  case type(X) of
+    var ->
+      Var = mk_var(X),
+      trans_elements(Code, [Var|Vars], Moves, Env);
+    #beam_const{value=C} ->
+      Var = mk_var(new),
+      Move = hipe_icode:mk_move(Var, hipe_icode:mk_const(C)),
+      trans_elements(Code, [Var|Vars], [Move|Moves], Env)
+  end;
+trans_elements([], Vars, Moves, Env) ->
+  {Moves, Vars, Env}.
 
 %%-----------------------------------------------------------------------
 %% The code for this instruction is a bit large because we are treating

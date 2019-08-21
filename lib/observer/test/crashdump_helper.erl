@@ -24,7 +24,7 @@
          create_binaries/0,create_sub_binaries/1,
          dump_persistent_terms/0,
          create_persistent_terms/0]).
--compile(r18).
+-compile(r20).
 -include_lib("common_test/include/ct.hrl").
 
 n1_proc(N2,Creator) ->
@@ -204,5 +204,4 @@ dump_persistent_terms() ->
 create_persistent_terms() ->
     persistent_term:put({?MODULE,first}, {pid,42.0}),
     persistent_term:put({?MODULE,second}, [1,2,3]),
-    persistent_term:get().
-
+    {persistent_term:get({?MODULE,first}),persistent_term:get({?MODULE,second})}.

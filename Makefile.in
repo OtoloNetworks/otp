@@ -434,7 +434,7 @@ endif
 	  PATH=$(BOOT_PREFIX)"$${PATH}" \
 	  ERL_TOP=$(ERL_TOP) $(MAKE) TESTROOT="$(RELEASE_ROOT)" DOCGEN=$(BOOTSTRAP_ROOT)/bootstrap/lib/erl_docgen $@
 ifneq  ($(OTP_SMALL_BUILD),true)
-	echo "OTP doc built" > $(ERL_TOP)/make/otp_doc_built
+	test -f $(ERL_TOP)/make/otp_doc_built || echo "OTP doc built" > $(ERL_TOP)/make/otp_doc_built
 endif
 
 xmllint: docs
@@ -450,7 +450,9 @@ else
 	$(MAKE) -C system/doc $@
 endif
 
-mod2app: 
+mod2app: $(ERL_TOP)/make/$(TARGET)/mod2app.xml
+
+$(ERL_TOP)/make/$(TARGET)/mod2app.xml: erts/doc/src/Makefile lib/*/doc/src/Makefile 
 	PATH=$(BOOT_PREFIX)"$${PATH}" escript $(BOOTSTRAP_ROOT)/bootstrap/lib/erl_docgen/priv/bin/xref_mod_app.escript -topdir $(ERL_TOP) -outfile $(ERL_TOP)/make/$(TARGET)/mod2app.xml
 
 # ----------------------------------------------------------------------
@@ -483,37 +485,20 @@ libs:
 ifeq ($(OTP_SMALL_BUILD),true)
 	$(make_verbose)cd lib && \
 	  ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
-		$(MAKE) opt
+		$(MAKE) $(TYPE)
 else
 	$(make_verbose)cd lib && \
 	  ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
-		$(MAKE) opt BUILD_ALL=true
-	$(V_at)echo "OTP built" > $(ERL_TOP)/make/otp_built
+		$(MAKE) $(TYPE) BUILD_ALL=true
+	$(V_at)test -f $(ERL_TOP)/make/otp_built || echo "OTP built" > $(ERL_TOP)/make/otp_built
 endif
-kernel:
-	$(make_verbose)cd lib/kernel && \
-	  ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
-		$(MAKE) opt BUILD_ALL=true
 
-stdlib:
-	$(make_verbose)cd lib/stdlib && \
-	  ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
-		$(MAKE) opt BUILD_ALL=true
+APPS=$(patsubst $(ERL_TOP)/lib/%/doc,%,$(wildcard $(ERL_TOP)/lib/*/doc))
 
-compiler:
-	$(make_verbose)cd lib/compiler && \
+$(APPS):
+	$(make_verbose)cd lib/$@ && \
 	  ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
-		$(MAKE) opt BUILD_ALL=true
-
-hipe:
-	$(make_verbose)cd lib/hipe && \
-	  ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
-		$(MAKE) opt BUILD_ALL=true
-
-syntax_tools:
-	$(make_verbose)cd lib/syntax_tools && \
-	ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
-	    $(MAKE) opt BUILD_ALL=true
+		$(MAKE) $(TYPE) BUILD_ALL=true
 
 preloaded:
 	$(make_verbose)cd erts/preloaded/src && \
@@ -767,7 +752,7 @@ tertiary_bootstrap_copy:
 		true; \
 	done
 #	copy erl_interface includes
-	$(V_at)for x in lib/erl_interface/include/*; do \
+	$(V_at)for x in lib/erl_interface/include/*.h; do \
 		BN=`basename $$x`; \
 		TF=$(BOOTSTRAP_ROOT)/bootstrap/lib/erl_interface/include/$$BN; \
 		test -f  $$TF && \
@@ -988,7 +973,7 @@ primary_bootstrap_copy:
 
 # To remove modules left by the bootstrap building, but leave (restore)
 # the modules in kernel which are needed for an emulator build
-KERNEL_PRELOAD    = otp_ring0 init erl_prim_loader prim_inet prim_file zlib prim_zip erlang erts_code_purger
+KERNEL_PRELOAD    = erl_init init erl_prim_loader prim_inet prim_file zlib prim_zip erlang erts_code_purger
 KERNEL_PRELOAD_BEAMS=$(KERNEL_PRELOAD:%=$(BOOTSTRAP_TOP)/lib/kernel/ebin/%.beam)
 
 start_scripts:

@@ -78,7 +78,7 @@ const char etp_erts_version[] = ERLANG_VERSION;
 const char etp_otp_release[] = ERLANG_OTP_RELEASE;
 const char etp_compile_date[] = ERLANG_COMPILE_DATE;
 const char etp_arch[] = ERLANG_ARCHITECTURE;
-#ifdef ERTS_ENABLE_KERNEL_POLL
+#if ERTS_ENABLE_KERNEL_POLL
 const int erts_use_kernel_poll = 1;
 const int etp_kernel_poll_support = 1;
 #else
@@ -128,7 +128,7 @@ const Eterm etp_hole_marker = 0;
 
 static int modified_sched_thread_suggested_stack_size = 0;
 
-Eterm erts_init_process_id;
+Eterm erts_init_process_id = ERTS_INVALID_PID;
 
 /*
  * Note about VxWorks: All variables must be initialized by executable code,
@@ -163,7 +163,6 @@ int erts_initialized = 0;
  * Configurable parameters.
  */
 
-Uint display_items;	    	/* no of items to display in traces etc */
 int H_MIN_SIZE;			/* The minimum heap grain */
 int BIN_VH_MIN_SIZE;		/* The minimum binary virtual*/
 int H_MAX_SIZE;			/* The maximum heap size */
@@ -354,6 +353,7 @@ erl_init(int ncpu,
     erts_init_bif();
     erts_init_bif_chksum();
     erts_init_bif_binary();
+    erts_init_bif_guard();
     erts_init_bif_persistent_term();
     erts_init_bif_re();
     erts_init_unicode(); /* after RE to get access to PCRE unicode */
@@ -376,6 +376,7 @@ erl_init(int ncpu,
 }
 
 static Eterm
+
 erl_spawn_system_process(Process* parent, Eterm mod, Eterm func, Eterm args,
                          ErlSpawnOpts *so)
 {
@@ -397,16 +398,15 @@ erl_spawn_system_process(Process* parent, Eterm mod, Eterm func, Eterm args,
 }
 
 static Eterm
-erl_first_process_otp(char* modname, void* code, unsigned size, int argc, char** argv)
+erl_first_process_otp(char* mod_name, int argc, char** argv)
 {
     int i;
-    Eterm start_mod;
     Eterm args;
     Eterm res;
     Eterm* hp;
     Process parent;
     ErlSpawnOpts so;
-    Eterm env;
+    Eterm boot_mod;
 
     /*
      * We need a dummy parent process to be able to call erl_create_process().
@@ -422,16 +422,14 @@ erl_first_process_otp(char* modname, void* code, unsigned size, int argc, char**
 	args = CONS(hp, new_binary(&parent, (byte*)argv[i], len), args);
 	hp += 2;
     }
-    env = new_binary(&parent, code, size);
+    boot_mod = erts_atom_put((byte *) mod_name, sys_strlen(mod_name),
+                             ERTS_ATOM_ENC_LATIN1, 1);
     args = CONS(hp, args, NIL);
     hp += 2;
-    args = CONS(hp, env, args);
-
-    start_mod = erts_atom_put((byte *) modname, sys_strlen(modname),
-                              ERTS_ATOM_ENC_LATIN1, 1);
+    args = CONS(hp, boot_mod, args);
 
     so.flags = erts_default_spo_flags;
-    res = erl_spawn_system_process(&parent, start_mod, am_start, args, &so);
+    res = erl_spawn_system_process(&parent, am_erl_init, am_start, args, &so);
     ASSERT(is_internal_pid(res));
 
     erts_proc_unlock(&parent, ERTS_PROC_LOCK_MAIN);
@@ -527,7 +525,6 @@ erts_preloaded(Process* p)
 /* static variables that must not change (use same values at restart) */
 static char* program;
 static char* init = "init";
-static char* boot = "boot";
 static int    boot_argc;
 static char** boot_argv;
 
@@ -581,9 +578,6 @@ void erts_usage(void)
     int this_rel = this_rel_num();
     erts_fprintf(stderr, "Usage: %s [flags] [ -- [init_args] ]\n", progname(program));
     erts_fprintf(stderr, "The flags are:\n\n");
-
-    /*    erts_fprintf(stderr, "-# number  set the number of items to be used in traces etc\n"); */
-
     erts_fprintf(stderr, "-a size        suggested stack size in kilo words for threads\n");
     erts_fprintf(stderr, "               in the async-thread pool, valid range is [%d-%d]\n",
 		 ERTS_ASYNC_THREAD_MIN_STACK_SIZE,
@@ -591,18 +585,15 @@ void erts_usage(void)
     erts_fprintf(stderr, "-A number      set number of threads in async thread pool,\n");
     erts_fprintf(stderr, "               valid range is [0-%d]\n",
 		 ERTS_MAX_NO_OF_ASYNC_THREADS);
-
     erts_fprintf(stderr, "-B[c|d|i]      c to have Ctrl-c interrupt the Erlang shell,\n");
     erts_fprintf(stderr, "               d (or no extra option) to disable the break\n");
     erts_fprintf(stderr, "               handler, i to ignore break signals\n");
-
-    /*    erts_fprintf(stderr, "-b func    set the boot function (default boot)\n"); */
-
     erts_fprintf(stderr, "-c bool        enable or disable time correction\n");
     erts_fprintf(stderr, "-C mode        set time warp mode; valid modes are:\n");
     erts_fprintf(stderr, "               no_time_warp|single_time_warp|multi_time_warp\n");
     erts_fprintf(stderr, "-d             don't write a crash dump for internally detected errors\n");
     erts_fprintf(stderr, "               (halt(String) will still produce a crash dump)\n");
+    erts_fprintf(stderr, "-dcg           set the limit for the number of decentralized counter groups\n");
     erts_fprintf(stderr, "-fn[u|a|l]     Control how filenames are interpreted\n");
     erts_fprintf(stderr, "-hms size      set minimum heap size in words (default %d)\n",
 	       H_DEFAULT_SIZE);
@@ -616,7 +607,6 @@ void erts_usage(void)
 	       erts_pd_initial_size);
     erts_fprintf(stderr, "-hmqd  val     set default message queue data flag for processes,\n");
     erts_fprintf(stderr, "               valid values are: off_heap | on_heap\n");
-
     erts_fprintf(stderr, "-IOp number    set number of pollsets to be used to poll for I/O,\n");
     erts_fprintf(stderr, "               This value has to be equal or smaller than the\n");
     erts_fprintf(stderr, "               number of poll threads. If the current platform\n");
@@ -627,9 +617,7 @@ void erts_usage(void)
     erts_fprintf(stderr, "               number of poll threads.");
     erts_fprintf(stderr, "-IOPt number   set number of threads to be used to poll for I/O\n");
     erts_fprintf(stderr, "               as a percentage of the number of schedulers.");
-
-    /*    erts_fprintf(stderr, "-i module  set the boot module (default init)\n"); */
-
+    erts_fprintf(stderr, "-i module      set the boot module (default init)\n");
     erts_fprintf(stderr, "-n[s|a|d]      Control behavior of signals to ports\n");
     erts_fprintf(stderr, "               Note that this flag is deprecated!\n");
     erts_fprintf(stderr, "-M<X> <Y>      memory allocator switches,\n");
@@ -644,7 +632,6 @@ void erts_usage(void)
     erts_fprintf(stderr, "-R number      set compatibility release number,\n");
     erts_fprintf(stderr, "               valid range [%d-%d]\n",
 		 this_rel-2, this_rel);
-
     erts_fprintf(stderr, "-r             force ets memory block to be moved on realloc\n");
     erts_fprintf(stderr, "-rg amount     set reader groups limit\n");
     erts_fprintf(stderr, "-sbt type      set scheduler bind type, valid types are:\n");
@@ -715,9 +702,7 @@ void erts_usage(void)
     erts_fprintf(stderr, "-T number      set modified timing level, valid range is [0-%d]\n",
 		 ERTS_MODIFIED_TIMING_LEVELS-1);
     erts_fprintf(stderr, "-V             print Erlang version\n");
-
     erts_fprintf(stderr, "-v             turn on chatty mode (GCs will be reported etc)\n");
-
     erts_fprintf(stderr, "-W<i|w|e>      set error logger warnings mapping,\n");
     erts_fprintf(stderr, "               see error_logger documentation for details\n");
     erts_fprintf(stderr, "-zdbbl size    set the distribution buffer busy limit in kilobytes\n");
@@ -801,6 +786,8 @@ early_init(int *argc, char **argv) /*
     int dirty_io_scheds;
     int max_reader_groups;
     int reader_groups;
+    int max_decentralized_counter_groups;
+    int decentralized_counter_groups;
     char envbuf[21]; /* enough for any 64-bit integer */
     size_t envbufsz;
 
@@ -808,7 +795,6 @@ early_init(int *argc, char **argv) /*
 
     erts_sched_compact_load = 1;
     erts_printf_eterm_func = erts_printf_term;
-    display_items = 200;
     erts_backtrace_depth = DEFAULT_BACKTRACE_SIZE;
     erts_async_max_threads = ERTS_DEFAULT_NO_ASYNC_THREADS;
     erts_async_thread_suggested_stack_size = ERTS_ASYNC_THREAD_MIN_STACK_SIZE;
@@ -821,7 +807,8 @@ early_init(int *argc, char **argv) /*
 
     erts_initialized = 0;
 
-    erts_pre_early_init_cpu_topology(&max_reader_groups,
+    erts_pre_early_init_cpu_topology(&max_decentralized_counter_groups,
+                                     &max_reader_groups,
 				     &ncpu,
 				     &ncpuonln,
 				     &ncpuavail);
@@ -882,6 +869,24 @@ early_init(int *argc, char **argv) /*
 	    }
 	    if (argv[i][0] == '-') {
 		switch (argv[i][1]) {
+		case 'd': {
+		    char *sub_param = argv[i]+2;
+		    if (has_prefix("cg", sub_param)) {
+			char *arg = get_arg(sub_param+2, argv[i+1], &i);
+			if (sscanf(arg, "%d", &max_decentralized_counter_groups) != 1) {
+			    erts_fprintf(stderr,
+					 "bad decentralized counter groups limit: %s\n", arg);
+			    erts_usage();
+			}
+			if (max_decentralized_counter_groups < 0) {
+			    erts_fprintf(stderr,
+					 "bad decentralized counter groups limit: %d\n",
+					 max_decentralized_counter_groups);
+			    erts_usage();
+			}
+		    }
+		    break;
+		}
 		case 'r': {
 		    char *sub_param = argv[i]+2;
 		    if (has_prefix("g", sub_param)) {
@@ -1203,8 +1208,10 @@ early_init(int *argc, char **argv) /*
     erts_early_init_cpu_topology(no_schedulers,
 				 &max_main_threads,
 				 max_reader_groups,
-				 &reader_groups);
-
+				 &reader_groups,
+                                 max_decentralized_counter_groups,
+                                 &decentralized_counter_groups);
+    erts_flxctr_setup(decentralized_counter_groups);
     {
 	erts_thr_late_init_data_t elid = ERTS_THR_LATE_INIT_DATA_DEF_INITER;
 	elid.mem.std.alloc = ethr_std_alloc;
@@ -1315,25 +1322,9 @@ erl_start(int argc, char **argv)
 
 	    /*
 	     * NOTE: -M flags are handled (and removed from argv) by
-	     * erts_alloc_init(). 
-	     *
-	     * The -d, -m, -S, -t, and -T flags was removed in
-	     * Erlang 5.3/OTP R9C.
-	     *
-	     * -S, and -T has been reused in Erlang 5.5/OTP R11B.
-	     *
-	     * -d has been reused in a patch R12B-4.
+	     * erts_alloc_init().
 	     */
 
-	case '#' :
-	    arg = get_arg(argv[i]+2, argv[i+1], &i);
-	    if ((display_items = atoi(arg)) == 0) {
-		erts_fprintf(stderr, "bad display items%s\n", arg);
-		erts_usage();
-	    }
-	    VERBOSE(DEBUG_SYSTEM,
-                    ("using display items %d\n",display_items));
-	    break;
 	case 'p':
 	    if (!sys_strncmp(argv[i],"-pc",3)) {
 		int printable_chars = ERL_PRINTABLE_CHARACTERS_LATIN1;
@@ -1610,11 +1601,6 @@ erl_start(int argc, char **argv)
 	case 'i':
 	    /* define name of module for initial function */
 	    init = get_arg(argv[i]+2, argv[i+1], &i);
-	    break;
-
-	case 'b':
-	    /* define name of initial function */
-	    boot = get_arg(argv[i]+2, argv[i+1], &i);
 	    break;
 
 	case 'B':
@@ -2302,8 +2288,8 @@ erl_start(int argc, char **argv)
 
     erts_initialized = 1;
 
-    erts_init_process_id = erl_first_process_otp("otp_ring0", NULL, 0,
-                                                 boot_argc, boot_argv);
+    erts_init_process_id = erl_first_process_otp(init, boot_argc, boot_argv);
+    ASSERT(erts_init_process_id != ERTS_INVALID_PID);
 
     {
 	/*

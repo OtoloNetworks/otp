@@ -26,14 +26,14 @@
 -export([app_test/1,appup_test/1,smoke_test/1,revert/1,revert_map/1,
          revert_map_type/1,
 	t_abstract_type/1,t_erl_parse_type/1,t_type/1, t_epp_dodger/1,
-	t_comment_scan/1,t_igor/1,t_erl_tidy/1]).
+	t_comment_scan/1,t_igor/1,t_erl_tidy/1,t_prettypr/1]).
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
 all() -> 
     [app_test,appup_test,smoke_test,revert,revert_map,revert_map_type,
     t_abstract_type,t_erl_parse_type,t_type,t_epp_dodger,
-    t_comment_scan,t_igor,t_erl_tidy].
+    t_comment_scan,t_igor,t_erl_tidy,t_prettypr].
 
 groups() -> 
     [].
@@ -74,7 +74,7 @@ smoke_test_file(File) ->
 	    [print_error_markers(F, File) || F <- Forms],
 	    ok;
 	{error,Reason} ->
-	    io:format("~s: ~p\n", [File,Reason]),
+	    io:format("~ts: ~p\n", [File,Reason]),
 	    error
     end.
 
@@ -82,7 +82,7 @@ print_error_markers(F, File) ->
     case erl_syntax:type(F) of
 	error_marker ->
 	    {L,M,Info} = erl_syntax:error_marker_info(F),
-	    io:format("~ts:~p: ~s", [File,L,M:format_error(Info)]);
+	    io:format("~ts:~p: ~ts", [File,L,M:format_error(Info)]);
 	_ ->
 	    ok
     end.
@@ -300,6 +300,14 @@ t_comment_scan(Config) when is_list(Config) ->
     ok = test_comment_scan(Filenames,DataDir),
     ok.
 
+t_prettypr(Config) when is_list(Config) ->
+    DataDir   = ?config(data_dir, Config),
+    PrivDir   = ?config(priv_dir, Config),
+    Filenames = ["type_specs.erl",
+                 "specs_and_funs.erl"],
+    ok = test_prettypr(Filenames,DataDir,PrivDir),
+    ok.
+
 test_files(Config) ->
     DataDir = ?config(data_dir, Config),
     [ filename:join(DataDir,Filename) || Filename <- test_files() ].
@@ -307,7 +315,8 @@ test_files(Config) ->
 test_files() ->
     ["syntax_tools_SUITE_test_module.erl",
      "syntax_tools_test.erl",
-     "type_specs.erl"].
+     "type_specs.erl",
+     "specs_and_funs.erl"].
 
 t_igor(Config) when is_list(Config) ->
     DataDir   = ?config(data_dir, Config),
@@ -353,10 +362,31 @@ test_comment_scan([File|Files],DataDir) ->
 	  end,
     Fs1 = erl_recomment:recomment_forms(Fs0, Comments),
     Fs2 = erl_syntax_lib:map(Fun, Fs1),
-    io:format("File: ~s~n", [Filename]),
+    io:format("File: ~ts~n", [Filename]),
     io:put_chars(erl_prettypr:format(Fs2, [{paper,  120},
 					   {ribbon, 110}])),
     test_comment_scan(Files,DataDir).
+
+
+test_prettypr([],_,_) -> ok;
+test_prettypr([File|Files],DataDir,PrivDir) ->
+    Filename  = filename:join(DataDir,File),
+    io:format("Parsing ~p~n", [Filename]),
+    {ok, Fs0} = epp:parse_file(Filename, [], []),
+    Fs = erl_syntax:form_list(Fs0),
+    PP = erl_prettypr:format(Fs, [{paper,  120}, {ribbon, 110}]),
+    io:put_chars(PP),
+    OutFile = filename:join(PrivDir, File),
+    ok = file:write_file(OutFile,unicode:characters_to_binary(PP)),
+    io:format("Parsing OutFile: ~ts~n", [OutFile]),
+    {ok, Fs2} = epp:parse_file(OutFile, [], []),
+    case [Error || {error, _} = Error <- Fs2] of
+        [] ->
+            ok;
+        Errors ->
+            ?t:fail(Errors)
+    end,
+    test_prettypr(Files,DataDir,PrivDir).
 
 
 test_epp_dodger([], _, _) -> ok;
@@ -415,7 +445,7 @@ pretty_print_parse_forms([{Fs0,Type}|FsForms],PrivDir,Filename) ->
     {Fs2,{CC,CT}} = erl_syntax_lib:mapfold(Comment,{0,0}, Fs1),
     io:format("Commented on ~w cases and ~w tries~n", [CC,CT]),
     PP  = erl_prettypr:format(Fs2),
-    ok  = file:write_file(OutFile,iolist_to_binary(PP)),
+    ok  = file:write_file(OutFile,unicode:characters_to_binary(PP)),
     pretty_print_parse_forms(FsForms,PrivDir,Filename).
 
 

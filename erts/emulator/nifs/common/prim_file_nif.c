@@ -476,7 +476,8 @@ static ERL_NIF_TERM open_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
     ERL_NIF_TERM result;
     efile_path_t path;
 
-    if(argc != 2 || !enif_is_list(env, argv[1])) {
+    ASSERT(argc == 2);
+    if(!enif_is_list(env, argv[1])) {
         return enif_make_badarg(env);
     }
 
@@ -551,7 +552,8 @@ static ERL_NIF_TERM read_nif_impl(efile_data_t *d, ErlNifEnv *env, int argc, con
     SysIOVec read_vec[1];
     ErlNifBinary result;
 
-    if(argc != 1 || !enif_is_number(env, argv[0])) {
+    ASSERT(argc == 1);
+    if(!enif_is_number(env, argv[0])) {
         return enif_make_badarg(env);
     }
 
@@ -589,7 +591,8 @@ static ERL_NIF_TERM write_nif_impl(efile_data_t *d, ErlNifEnv *env, int argc, co
     Sint64 bytes_written;
     ERL_NIF_TERM tail;
 
-    if(argc != 1 || !enif_inspect_iovec(env, 64, argv[0], &tail, &input)) {
+    ASSERT(argc == 1);
+    if(!enif_inspect_iovec(env, 64, argv[0], &tail, &input)) {
         return enif_make_badarg(env);
     }
 
@@ -612,8 +615,8 @@ static ERL_NIF_TERM pread_nif_impl(efile_data_t *d, ErlNifEnv *env, int argc, co
     SysIOVec read_vec[1];
     ErlNifBinary result;
 
-    if(argc != 2 || !enif_is_number(env, argv[0])
-                 || !enif_is_number(env, argv[1])) {
+    ASSERT(argc == 2);
+    if(!enif_is_number(env, argv[0]) || !enif_is_number(env, argv[1])) {
         return enif_make_badarg(env);
     }
 
@@ -652,8 +655,9 @@ static ERL_NIF_TERM pwrite_nif_impl(efile_data_t *d, ErlNifEnv *env, int argc, c
     Sint64 bytes_written, offset;
     ERL_NIF_TERM tail;
 
-    if(argc != 2 || !enif_is_number(env, argv[0])
-                 || !enif_inspect_iovec(env, 64, argv[1], &tail, &input)) {
+    ASSERT(argc == 2);
+    if(!enif_is_number(env, argv[0])
+       || !enif_inspect_iovec(env, 64, argv[1], &tail, &input)) {
         return enif_make_badarg(env);
     }
 
@@ -680,7 +684,8 @@ static ERL_NIF_TERM seek_nif_impl(efile_data_t *d, ErlNifEnv *env, int argc, con
     Sint64 new_position, offset;
     enum efile_seek_t seek;
 
-    if(argc != 2 || !enif_get_int64(env, argv[1], &offset)) {
+    ASSERT(argc == 2);
+    if(!enif_get_int64(env, argv[1], &offset)) {
         return enif_make_badarg(env);
     }
 
@@ -704,7 +709,8 @@ static ERL_NIF_TERM seek_nif_impl(efile_data_t *d, ErlNifEnv *env, int argc, con
 static ERL_NIF_TERM sync_nif_impl(efile_data_t *d, ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     int data_only;
 
-    if(argc != 1 || !enif_get_int(env, argv[0], &data_only)) {
+    ASSERT(argc == 1);
+    if(!enif_get_int(env, argv[0], &data_only)) {
         return enif_make_badarg(env);
     }
 
@@ -716,9 +722,7 @@ static ERL_NIF_TERM sync_nif_impl(efile_data_t *d, ErlNifEnv *env, int argc, con
 }
 
 static ERL_NIF_TERM truncate_nif_impl(efile_data_t *d, ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-    if(argc != 0) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 0);
 
     if(!efile_truncate(d)) {
         return posix_error_to_tuple(env, d->posix_errno);
@@ -730,8 +734,8 @@ static ERL_NIF_TERM truncate_nif_impl(efile_data_t *d, ErlNifEnv *env, int argc,
 static ERL_NIF_TERM allocate_nif_impl(efile_data_t *d, ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     Sint64 offset, length;
 
-    if(argc != 2 || !enif_is_number(env, argv[0])
-                 || !enif_is_number(env, argv[1])) {
+    ASSERT(argc == 2);
+    if(!enif_is_number(env, argv[0]) || !enif_is_number(env, argv[1])) {
         return enif_make_badarg(env);
     }
 
@@ -752,8 +756,8 @@ static ERL_NIF_TERM advise_nif_impl(efile_data_t *d, ErlNifEnv *env, int argc, c
     enum efile_advise_t advise;
     Sint64 offset, length;
 
-    if(argc != 3 || !enif_is_number(env, argv[0])
-                 || !enif_is_number(env, argv[1])) {
+    ASSERT(argc == 3);
+    if(!enif_is_number(env, argv[0]) || !enif_is_number(env, argv[1])) {
         return enif_make_badarg(env);
     }
 
@@ -816,8 +820,8 @@ static ERL_NIF_TERM ipread_s32bu_p32bu_nif_impl(efile_data_t *d, ErlNifEnv *env,
 
     ErlNifBinary payload;
 
-    if(argc != 2 || !enif_is_number(env, argv[0])
-                 || !enif_is_number(env, argv[1])) {
+    ASSERT(argc == 2);
+    if(!enif_is_number(env, argv[0]) || !enif_is_number(env, argv[1])) {
         return enif_make_badarg(env);
     }
 
@@ -884,9 +888,7 @@ static ERL_NIF_TERM ipread_s32bu_p32bu_nif_impl(efile_data_t *d, ErlNifEnv *env,
 }
 
 static ERL_NIF_TERM get_handle_nif_impl(efile_data_t *d, ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-    if(argc != 0) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 0);
 
     return efile_get_handle(env, d);
 }
@@ -898,7 +900,8 @@ static ERL_NIF_TERM read_info_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM a
     efile_path_t path;
     int follow_links;
 
-    if(argc != 2 || !enif_get_int(env, argv[1], &follow_links)) {
+    ASSERT(argc == 2);
+    if(!enif_get_int(env, argv[1], &follow_links)) {
         return enif_make_badarg(env);
     }
 
@@ -933,7 +936,8 @@ static ERL_NIF_TERM set_permissions_nif(ErlNifEnv *env, int argc, const ERL_NIF_
     efile_path_t path;
     unsigned int permissions;
 
-    if(argc != 2 || !enif_get_uint(env, argv[1], &permissions)) {
+    ASSERT(argc == 2);
+    if(!enif_get_uint(env, argv[1], &permissions)) {
         return enif_make_badarg(env);
     }
 
@@ -952,8 +956,8 @@ static ERL_NIF_TERM set_owner_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM a
     efile_path_t path;
     int uid, gid;
 
-    if(argc != 3 || !enif_get_int(env, argv[1], &uid)
-                 || !enif_get_int(env, argv[2], &gid)) {
+    ASSERT(argc == 3);
+    if(!enif_get_int(env, argv[1], &uid) || !enif_get_int(env, argv[2], &gid)) {
         return enif_make_badarg(env);
     }
 
@@ -972,9 +976,10 @@ static ERL_NIF_TERM set_time_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM ar
     Sint64 accessed, modified, created;
     efile_path_t path;
 
-    if(argc != 4 || !enif_get_int64(env, argv[1], &accessed)
-                 || !enif_get_int64(env, argv[2], &modified)
-                 || !enif_get_int64(env, argv[3], &created)) {
+    ASSERT(argc == 4);
+    if(!enif_get_int64(env, argv[1], &accessed)
+       || !enif_get_int64(env, argv[2], &modified)
+       || !enif_get_int64(env, argv[3], &created)) {
         return enif_make_badarg(env);
     }
 
@@ -993,9 +998,7 @@ static ERL_NIF_TERM read_link_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM a
     efile_path_t path;
     ERL_NIF_TERM result;
 
-    if(argc != 1) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 1);
 
     if((posix_errno = efile_marshal_path(env, argv[0], &path))) {
         return posix_error_to_tuple(env, posix_errno);
@@ -1012,9 +1015,7 @@ static ERL_NIF_TERM list_dir_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM ar
     efile_path_t path;
     ERL_NIF_TERM result;
 
-    if(argc != 1) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 1);
 
     if((posix_errno = efile_marshal_path(env, argv[0], &path))) {
         return posix_error_to_tuple(env, posix_errno);
@@ -1030,9 +1031,7 @@ static ERL_NIF_TERM rename_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv
 
     efile_path_t existing_path, new_path;
 
-    if(argc != 2) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 2);
 
     if((posix_errno = efile_marshal_path(env, argv[0], &existing_path))) {
         return posix_error_to_tuple(env, posix_errno);
@@ -1050,9 +1049,7 @@ static ERL_NIF_TERM make_hard_link_nif(ErlNifEnv *env, int argc, const ERL_NIF_T
 
     efile_path_t existing_path, new_path;
 
-    if(argc != 2) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 2);
 
     if((posix_errno = efile_marshal_path(env, argv[0], &existing_path))) {
         return posix_error_to_tuple(env, posix_errno);
@@ -1070,9 +1067,7 @@ static ERL_NIF_TERM make_soft_link_nif(ErlNifEnv *env, int argc, const ERL_NIF_T
 
     efile_path_t existing_path, new_path;
 
-    if(argc != 2) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 2);
 
     if((posix_errno = efile_marshal_path(env, argv[0], &existing_path))) {
         return posix_error_to_tuple(env, posix_errno);
@@ -1090,9 +1085,7 @@ static ERL_NIF_TERM make_dir_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM ar
 
     efile_path_t path;
 
-    if(argc != 1) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 1);
 
     if((posix_errno = efile_marshal_path(env, argv[0], &path))) {
         return posix_error_to_tuple(env, posix_errno);
@@ -1108,9 +1101,7 @@ static ERL_NIF_TERM del_file_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM ar
 
     efile_path_t path;
 
-    if(argc != 1) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 1);
 
     if((posix_errno = efile_marshal_path(env, argv[0], &path))) {
         return posix_error_to_tuple(env, posix_errno);
@@ -1126,9 +1117,7 @@ static ERL_NIF_TERM del_dir_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM arg
 
     efile_path_t path;
 
-    if(argc != 1) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 1);
 
     if((posix_errno = efile_marshal_path(env, argv[0], &path))) {
         return posix_error_to_tuple(env, posix_errno);
@@ -1145,7 +1134,8 @@ static ERL_NIF_TERM get_device_cwd_nif(ErlNifEnv *env, int argc, const ERL_NIF_T
     ERL_NIF_TERM result;
     int device_index;
 
-    if(argc != 1 || !enif_get_int(env, argv[0], &device_index)) {
+    ASSERT(argc == 1);
+    if(!enif_get_int(env, argv[0], &device_index)) {
         return enif_make_badarg(env);
     }
 
@@ -1160,9 +1150,7 @@ static ERL_NIF_TERM get_cwd_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM arg
     posix_errno_t posix_errno;
     ERL_NIF_TERM result;
 
-    if(argc != 0) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 0);
 
     if((posix_errno = efile_get_cwd(env, &result))) {
         return posix_error_to_tuple(env, posix_errno);
@@ -1176,9 +1164,7 @@ static ERL_NIF_TERM set_cwd_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM arg
 
     efile_path_t path;
 
-    if(argc != 1) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 1);
 
     if((posix_errno = efile_marshal_path(env, argv[0], &path))) {
         return posix_error_to_tuple(env, posix_errno);
@@ -1254,9 +1240,7 @@ static ERL_NIF_TERM read_file_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM a
 
     ErlNifBinary result;
 
-    if(argc != 1) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 1);
 
     if((posix_errno = efile_marshal_path(env, argv[0], &path))) {
         return posix_error_to_tuple(env, posix_errno);
@@ -1284,9 +1268,7 @@ static ERL_NIF_TERM altname_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM arg
     efile_path_t path;
     ERL_NIF_TERM result;
 
-    if(argc != 1) {
-        return enif_make_badarg(env);
-    }
+    ASSERT(argc == 1);
 
     if((posix_errno = efile_marshal_path(env, argv[0], &path))) {
         return posix_error_to_tuple(env, posix_errno);

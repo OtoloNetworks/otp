@@ -707,6 +707,46 @@ error:
     return reds;
 }
 
+/** @brief Create a message with the content of process independent \c msg_env.
+ *  Invalidates \c msg_env.
+ */
+ErtsMessage* erts_create_message_from_nif_env(ErlNifEnv* msg_env)
+{
+    struct enif_msg_environment_t* menv = (struct enif_msg_environment_t*)msg_env;
+    ErtsMessage* mp;
+
+    flush_env(msg_env);
+    mp = erts_alloc_message(0, NULL);
+    mp->data.heap_frag = menv->env.heap_frag;
+    ASSERT(mp->data.heap_frag == MBUF(&menv->phony_proc));
+    if (mp->data.heap_frag != NULL) {
+        /* Move all offheap's from phony proc to the first fragment.
+           Quick and dirty... */
+        ASSERT(!is_offheap(&mp->data.heap_frag->off_heap));
+        mp->data.heap_frag->off_heap = MSO(&menv->phony_proc);
+        clear_offheap(&MSO(&menv->phony_proc));
+        menv->env.heap_frag = NULL;
+        MBUF(&menv->phony_proc) = NULL;
+    }
+    return mp;
+}
+
+static ERTS_INLINE ERL_NIF_TERM make_copy(ErlNifEnv* dst_env,
+                                          ERL_NIF_TERM src_term,
+                                          Uint *cpy_szp)
+{
+    Uint sz;
+    Eterm* hp;
+    /*
+     * No preserved sharing allowed as long as literals are also preserved.
+     * Process independent environment can not be reached by purge.
+     */
+    sz = size_object(src_term);
+    if (cpy_szp)
+        *cpy_szp += sz;
+    hp = alloc_heap(dst_env, sz);
+    return copy_struct(src_term, sz, &hp, &MSO(dst_env->proc));
+}
 
 int enif_send(ErlNifEnv* env, const ErlNifPid* to_pid,
 	      ErlNifEnv* msg_env, ERL_NIF_TERM msg)
@@ -720,6 +760,7 @@ int enif_send(ErlNifEnv* env, const ErlNifPid* to_pid,
     Eterm from;
     Eterm receiver = to_pid->pid;
     int scheduler;
+    Uint copy_sz = 0;
 
     execution_state(env, &c_p, &scheduler);
 
@@ -783,14 +824,14 @@ int enif_send(ErlNifEnv* env, const ErlNifPid* to_pid,
                 stoken = NIL;
             }
 #endif
-            token = enif_make_copy(msg_env, stoken);
+            token = make_copy(msg_env, stoken, &copy_sz);
 
 #ifdef USE_VM_PROBES
             if (DT_UTAG_FLAGS(c_p) & DT_UTAG_SPREADING) {
                 if (is_immed(DT_UTAG(c_p)))
                     utag = DT_UTAG(c_p);
                 else
-                    utag = enif_make_copy(msg_env, DT_UTAG(c_p));
+                    utag = make_copy(msg_env, DT_UTAG(c_p), &copy_sz);
             }
             if (DTRACE_ENABLED(message_send)) {
                 if (have_seqtrace(stoken)) {
@@ -803,20 +844,8 @@ int enif_send(ErlNifEnv* env, const ErlNifPid* to_pid,
             }
 #endif
         }
-        flush_env(msg_env);
-        mp = erts_alloc_message(0, NULL);
+        mp = erts_create_message_from_nif_env(msg_env);
         ERL_MESSAGE_TOKEN(mp) = token;
-        mp->data.heap_frag = menv->env.heap_frag;
-        ASSERT(mp->data.heap_frag == MBUF(&menv->phony_proc));
-        if (mp->data.heap_frag != NULL) {
-            /* Move all offheap's from phony proc to the first fragment.
-               Quick and dirty... */
-            ASSERT(!is_offheap(&mp->data.heap_frag->off_heap));
-            mp->data.heap_frag->off_heap = MSO(&menv->phony_proc);
-            clear_offheap(&MSO(&menv->phony_proc));
-            menv->env.heap_frag = NULL;
-            MBUF(&menv->phony_proc) = NULL;
-        }
     } else {
         erts_literal_area_t litarea;
 	ErlOffHeap *ohp;
@@ -824,6 +853,7 @@ int enif_send(ErlNifEnv* env, const ErlNifPid* to_pid,
         Uint sz;
         INITIALIZE_LITERAL_PURGE_AREA(litarea);
         sz = size_object_litopt(msg, &litarea);
+        copy_sz += sz;
 	if (c_p && !env->tracee) {
 	    full_flush_env(env);
 	    mp = erts_alloc_message_heap(rp, &rp_locks, sz, &hp, &ohp);
@@ -856,6 +886,12 @@ int enif_send(ErlNifEnv* env, const ErlNifPid* to_pid,
             trace_send(c_p, receiver, msg);
 	    full_cache_env(env);
 	}
+        if (c_p && scheduler > 0 && copy_sz > ERTS_MSG_COPY_WORDS_PER_REDUCTION) {
+            Uint reds = copy_sz / ERTS_MSG_COPY_WORDS_PER_REDUCTION;
+            if (reds > CONTEXT_REDS)
+                reds = CONTEXT_REDS;
+            BUMP_REDS(c_p, (int) reds);
+        }
     }
     else {
         /* This clause is taken when the nif is called in the context
@@ -924,6 +960,7 @@ int enif_send(ErlNifEnv* env, const ErlNifPid* to_pid,
         erts_queue_message(rp, rp_locks, mp, msg, from);
 
 done:
+
     if (c_p == rp)
 	rp_locks &= ~ERTS_PROC_LOCK_MAIN;
     if (rp_locks & ~lc_locks)
@@ -987,7 +1024,7 @@ static Eterm call_whereis(ErlNifEnv *env, Eterm name)
     int scheduler;
 
     execution_state(env, &c_p, &scheduler);
-    ASSERT((c_p && scheduler) || (!c_p && !scheduler));
+    ASSERT(scheduler || !c_p);
 
     if (scheduler < 0) {
         /* dirty scheduler */
@@ -1036,17 +1073,8 @@ int enif_whereis_port(ErlNifEnv *env, ERL_NIF_TERM name, ErlNifPort *port)
 
 ERL_NIF_TERM enif_make_copy(ErlNifEnv* dst_env, ERL_NIF_TERM src_term)
 {
-    Uint sz;
-    Eterm* hp;
-    /*
-     * No preserved sharing allowed as long as literals are also preserved.
-     * Process independent environment can not be reached by purge.
-     */
-    sz = size_object(src_term);
-    hp = alloc_heap(dst_env, sz);
-    return copy_struct(src_term, sz, &hp, &MSO(dst_env->proc));
+    return make_copy(dst_env, src_term, NULL);
 }
-
 
 #ifdef DEBUG
 static int is_offheap(const ErlOffHeap* oh)
@@ -1070,6 +1098,17 @@ int enif_get_local_pid(ErlNifEnv* env, ERL_NIF_TERM term, ErlNifPid* pid)
         return 1;
     }
     return 0;
+}
+
+void enif_set_pid_undefined(ErlNifPid* pid)
+{
+    pid->pid = am_undefined;
+}
+
+int enif_is_pid_undefined(const ErlNifPid* pid)
+{
+    ASSERT(pid->pid == am_undefined || is_internal_pid(pid->pid));
+    return pid->pid == am_undefined;
 }
 
 int enif_get_local_port(ErlNifEnv* env, ERL_NIF_TERM term, ErlNifPort* port)
@@ -1134,6 +1173,47 @@ int enif_is_exception(ErlNifEnv* env, ERL_NIF_TERM term)
 int enif_is_number(ErlNifEnv* env, ERL_NIF_TERM term)
 {
     return is_number(term);
+}
+
+ErlNifTermType enif_term_type(ErlNifEnv* env, ERL_NIF_TERM term) {
+    (void)env;
+
+    switch (tag_val_def(term)) {
+    case ATOM_DEF:
+        return ERL_NIF_TERM_TYPE_ATOM;
+    case BINARY_DEF:
+        return ERL_NIF_TERM_TYPE_BITSTRING;
+    case FLOAT_DEF:
+        return ERL_NIF_TERM_TYPE_FLOAT;
+    case EXPORT_DEF:
+    case FUN_DEF:
+        return ERL_NIF_TERM_TYPE_FUN;
+    case BIG_DEF:
+    case SMALL_DEF:
+        return ERL_NIF_TERM_TYPE_INTEGER;
+    case LIST_DEF:
+    case NIL_DEF:
+        return ERL_NIF_TERM_TYPE_LIST;
+    case MAP_DEF:
+        return ERL_NIF_TERM_TYPE_MAP;
+    case EXTERNAL_PID_DEF:
+    case PID_DEF:
+        return ERL_NIF_TERM_TYPE_PID;
+    case EXTERNAL_PORT_DEF:
+    case PORT_DEF:
+        return ERL_NIF_TERM_TYPE_PORT;
+    case EXTERNAL_REF_DEF:
+    case REF_DEF:
+        return ERL_NIF_TERM_TYPE_REFERENCE;
+    case TUPLE_DEF:
+        return ERL_NIF_TERM_TYPE_TUPLE;
+    default:
+        /* tag_val_def() aborts on its own when passed complete garbage, but
+         * it's possible that the user has given us garbage that just happens
+         * to match something that tag_val_def() accepts but we don't, like
+         * binary match contexts. */
+        ERTS_INTERNAL_ERROR("Invalid term passed to enif_term_type");
+    }
 }
 
 static void aligned_binary_dtor(struct enif_tmp_obj_t* obj)
@@ -1264,11 +1344,18 @@ unsigned char* enif_make_new_binary(ErlNifEnv* env, size_t size,
 int enif_term_to_binary(ErlNifEnv *dst_env, ERL_NIF_TERM term,
                         ErlNifBinary *bin)
 {
-    Sint size;
+    Uint size;
     byte *bp;
     Binary* refbin;
 
-    size = erts_encode_ext_size(term);
+    switch (erts_encode_ext_size(term, &size)) {
+    case ERTS_EXT_SZ_SYSTEM_LIMIT:
+        return 0; /* system limit */
+    case ERTS_EXT_SZ_YIELD:
+        ERTS_INTERNAL_ERROR("Unexpected yield");
+    case ERTS_EXT_SZ_OK:
+        break;
+    }
     if (!enif_alloc_binary(size, bin))
         return 0;
 
@@ -2346,18 +2433,42 @@ rmon_refc_read(ErtsResourceMonitors *rms)
     return rms->refc & ERTS_RESOURCE_REFC_MASK;
 }
 
-static void dtor_demonitor(ErtsMonitor* mon, void* context)
+static int dtor_demonitor(ErtsMonitor* mon, void* context, Sint reds)
 {
     ASSERT(erts_monitor_is_origin(mon));
     ASSERT(is_internal_pid(mon->other.item));
 
     erts_proc_sig_send_demonitor(mon);
+    return 1;
 }
 
-#  define NIF_RESOURCE_DTOR &nif_resource_dtor
-
-static int nif_resource_dtor(Binary* bin)
+#ifdef DEBUG
+int erts_dbg_is_resource_dying(ErtsResource* resource)
 {
+    return resource->monitors && rmon_is_dying(resource->monitors);
+}
+#endif
+
+#define NIF_RESOURCE_DTOR &nif_resource_dtor_prologue
+
+static void run_resource_dtor(void* vbin);
+ 
+static int nif_resource_dtor_prologue(Binary* bin)
+{
+    /*
+     * Schedule user resource destructor as aux work to get a context
+     * where we know what locks we have for example.
+     */
+    Uint sched_id = erts_get_scheduler_id();
+    if (!sched_id)
+        sched_id = 1;
+    erts_schedule_misc_aux_work(sched_id, run_resource_dtor, bin);
+    return 0; /* don't free */
+}
+ 
+static void run_resource_dtor(void* vbin)
+{
+    Binary* bin = (Binary*) vbin;
     ErtsResource* resource = (ErtsResource*) ERTS_MAGIC_BIN_UNALIGNED_DATA(bin);
     ErlNifResourceType* type = resource->type;
     ASSERT(ERTS_MAGIC_BIN_DESTRUCTOR(bin) == NIF_RESOURCE_DTOR);
@@ -2389,11 +2500,11 @@ static int nif_resource_dtor(Binary* bin)
          * If resource->monitors->refc != 0 there are
          * outstanding references to the resource from
          * monitors that has not been removed yet.
-         * nif_resource_dtor() will be called again this
+         * nif_resource_dtor_prologue() will be called again when this
          * reference count reach zero.
          */
         if (refc != 0)
-            return 0; /* we'll be back... */
+            return; /* we'll be back... */
         erts_mtx_destroy(&rm->lock);
     }
 
@@ -2410,7 +2521,7 @@ static int nif_resource_dtor(Binary* bin)
 	steal_resource_type(type);
 	erts_free(ERTS_ALC_T_NIF, type);
     }
-    return 1;
+    erts_magic_binary_free((Binary*)vbin);
 }
 
 void erts_resource_stop(ErtsResource* resource, ErlNifEvent e,
@@ -2694,8 +2805,12 @@ int enif_consume_timeslice(ErlNifEnv* env, int percent)
 {
     Process *proc;
     Sint reds;
+    int sched;
 
-    execution_state(env, &proc, NULL);
+    execution_state(env, &proc, &sched);
+
+    if (sched < 0)
+        return 0; /* no-op on dirty scheduler */
 
     ASSERT(is_proc_bound(env) && percent >= 1 && percent <= 100);
     if (percent < 1) percent = 1;
@@ -3318,6 +3433,9 @@ int enif_monitor_process(ErlNifEnv* env, void* obj, const ErlNifPid* target_pid,
     }
     ASSERT(rsrc->type->down);
 
+    if (target_pid->pid == am_undefined)
+        return 1;
+
     ref = erts_make_ref_in_buffer(tmp);
 
     mdp = erts_monitor_create(ERTS_MON_TYPE_RESOURCE, ref,
@@ -3349,6 +3467,12 @@ int enif_monitor_process(ErlNifEnv* env, void* obj, const ErlNifPid* target_pid,
         erts_ref_to_driver_monitor(ref,monitor);
 
     return 0;
+}
+
+ERL_NIF_TERM enif_make_monitor_term(ErlNifEnv* env, const ErlNifMonitor* monitor)
+{
+    Eterm* hp = alloc_heap(env, ERTS_REF_THING_SIZE);
+    return erts_driver_monitor_to_ref(hp, monitor);
 }
 
 int enif_demonitor_process(ErlNifEnv* env, void* obj, const ErlNifMonitor* monitor)

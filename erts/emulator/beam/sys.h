@@ -63,6 +63,14 @@
 #  endif
 #endif
 
+#ifndef ERTS_NOINLINE
+#  if ERTS_AT_LEAST_GCC_VSN__(3,1,1)
+#    define ERTS_NOINLINE __attribute__((__noinline__))
+#  else
+#    define ERTS_NOINLINE
+#  endif
+#endif
+
 #if defined(DEBUG) || defined(ERTS_ENABLE_LOCK_CHECK)
 #  undef ERTS_CAN_INLINE
 #  define ERTS_CAN_INLINE 0
@@ -109,6 +117,23 @@
 #ifndef UNIX
 #  define UNIX 1
 #endif
+#endif
+
+/*
+ * Test for clang's convenient __has_builtin feature checking macro.
+ */
+#ifndef __has_builtin
+  #define __has_builtin(x) 0
+#endif
+
+/*
+ * Define HAVE_OVERFLOW_CHECK_BUILTINS if the overflow checking arithmetic
+ * builtins are available.
+ */
+#if ERTS_AT_LEAST_GCC_VSN__(5, 1, 0)
+#  define HAVE_OVERFLOW_CHECK_BUILTINS 1
+#elif __has_builtin(__builtin_mul_overflow)
+#  define HAVE_OVERFLOW_CHECK_BUILTINS 1
 #endif
 
 #include "erl_misc_utils.h"
@@ -1290,5 +1315,14 @@ erts_raw_env_next_char(byte *p, int encoding)
 }
 
 #endif /* #if ERTS_GLB_INLINE_INCL_FUNC_DEF */
+
+/*
+ * Magic numbers for our driver port_control callbacks.
+ * Kept them below 1<<27 to not inflict extra bignum garbage on 32-bit.
+ */
+#define ERTS_TTYSL_DRV_CONTROL_MAGIC_NUMBER  0x018b0900U
+#define ERTS_INET_DRV_CONTROL_MAGIC_NUMBER   0x03f1a300U
+#define ERTS_SPAWN_DRV_CONTROL_MAGIC_NUMBER  0x04c76a00U
+#define ERTS_FORKER_DRV_CONTROL_MAGIC_NUMBER 0x050a7800U
 
 #endif

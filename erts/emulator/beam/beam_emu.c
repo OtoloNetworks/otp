@@ -206,8 +206,12 @@ void** beam_ops;
 #ifdef DEBUG
 #  /* The stack pointer is used in an assertion. */
 #  define LIGHT_SWAPOUT SWAPOUT
+#  define DEBUG_SWAPOUT SWAPOUT
+#  define DEBUG_SWAPIN  SWAPIN
 #else
 #  define LIGHT_SWAPOUT HEAP_TOP(c_p) = HTOP
+#  define DEBUG_SWAPOUT
+#  define DEBUG_SWAPIN
 #endif
 
 /*
@@ -318,19 +322,19 @@ void** beam_ops;
 
 #define Arg(N)       I[(N)+1]
 
-#define GetR(pos, tr)				\
+#define GetSource(raw, dst)			\
    do {						\
-     tr = Arg(pos);				\
-     switch (loader_tag(tr)) {			\
+     dst = raw;                                 \
+     switch (loader_tag(dst)) {			\
      case LOADER_X_REG:				\
-        tr = x(loader_x_reg_index(tr));		\
+        dst = x(loader_x_reg_index(dst));       \
         break;					\
      case LOADER_Y_REG:				\
-        ASSERT(loader_y_reg_index(tr) >= 1);	\
-        tr = y(loader_y_reg_index(tr));		\
+        ASSERT(loader_y_reg_index(dst) >= 1);	\
+        dst = y(loader_y_reg_index(dst));       \
         break;					\
      }						\
-     CHECK_TERM(tr);				\
+     CHECK_TERM(dst);				\
    } while (0)
 
 #define PUT_TERM_REG(term, desc)		\
@@ -371,44 +375,33 @@ do {                                            \
 
 /*
  * process_main() is already huge, so we want to avoid inlining
- * into it. Especially functions that are seldom used.
+ * seldom used functions into it.
  */
-#ifdef __GNUC__
-#  define NOINLINE __attribute__((__noinline__))
-#else
-#  define NOINLINE
-#endif
-
-
-/*
- * The following functions are called directly by process_main().
- * Don't inline them.
- */
-static void init_emulator_finish(void) NOINLINE;
-static ErtsCodeMFA *ubif2mfa(void* uf) NOINLINE;
-static ErtsCodeMFA *gcbif2mfa(void* gcf) NOINLINE;
+static void init_emulator_finish(void) ERTS_NOINLINE;
+static ErtsCodeMFA *ubif2mfa(void* uf) ERTS_NOINLINE;
 static BeamInstr* handle_error(Process* c_p, BeamInstr* pc,
-			       Eterm* reg, ErtsCodeMFA* bif_mfa) NOINLINE;
+			       Eterm* reg, ErtsCodeMFA* bif_mfa) ERTS_NOINLINE;
 static BeamInstr* call_error_handler(Process* p, ErtsCodeMFA* mfa,
-				     Eterm* reg, Eterm func) NOINLINE;
+				     Eterm* reg, Eterm func) ERTS_NOINLINE;
 static BeamInstr* fixed_apply(Process* p, Eterm* reg, Uint arity,
-			      BeamInstr *I, Uint offs) NOINLINE;
+			      BeamInstr *I, Uint offs) ERTS_NOINLINE;
 static BeamInstr* apply(Process* p, Eterm* reg,
-                        BeamInstr *I, Uint offs) NOINLINE;
+                        BeamInstr *I, Uint offs) ERTS_NOINLINE;
 static BeamInstr* call_fun(Process* p, int arity,
-			   Eterm* reg, Eterm args) NOINLINE;
+			   Eterm* reg, Eterm args) ERTS_NOINLINE;
 static BeamInstr* apply_fun(Process* p, Eterm fun,
-			    Eterm args, Eterm* reg) NOINLINE;
+			    Eterm args, Eterm* reg) ERTS_NOINLINE;
 static Eterm new_fun(Process* p, Eterm* reg,
-		     ErlFunEntry* fe, int num_free) NOINLINE;
+		     ErlFunEntry* fe, int num_free) ERTS_NOINLINE;
+static int is_function2(Eterm Term, Uint arity);
 static Eterm erts_gc_new_map(Process* p, Eterm* reg, Uint live,
-                             Uint n, BeamInstr* ptr) NOINLINE;
+                             Uint n, BeamInstr* ptr) ERTS_NOINLINE;
 static Eterm erts_gc_new_small_map_lit(Process* p, Eterm* reg, Eterm keys_literal,
-                               Uint live, BeamInstr* ptr) NOINLINE;
+                               Uint live, BeamInstr* ptr) ERTS_NOINLINE;
 static Eterm erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
-                              Uint n, BeamInstr* new_p) NOINLINE;
+                              Uint n, BeamInstr* new_p) ERTS_NOINLINE;
 static Eterm erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
-                              Uint n, Eterm* new_p) NOINLINE;
+                              Uint n, Eterm* new_p) ERTS_NOINLINE;
 static Eterm get_map_element(Eterm map, Eterm key);
 static Eterm get_map_element_hash(Eterm map, Eterm key, Uint32 hx);
 
@@ -421,6 +414,7 @@ static Eterm add_stacktrace(Process* c_p, Eterm Value, Eterm exc);
 static void save_stacktrace(Process* c_p, BeamInstr* pc, Eterm* reg,
 			    ErtsCodeMFA *bif_mfa, Eterm args);
 static struct StackTrace * get_trace_from_exc(Eterm exc);
+static Eterm *get_freason_ptr_from_exc(Eterm exc);
 static Eterm make_arglist(Process* c_p, Eterm* reg, int a);
 
 void
@@ -881,19 +875,22 @@ void process_main(Eterm * x_reg_array, FloatDef* f_reg_array)
 #include "beam_warm.h"
 
  OpCase(normal_exit): {
-     SWAPOUT;
+     HEAVY_SWAPOUT;
      c_p->freason = EXC_NORMAL;
      c_p->arity = 0; /* In case this process will ever be garbed again. */
      ERTS_UNREQ_PROC_MAIN_LOCK(c_p);
      erts_do_exit_process(c_p, am_normal);
      ERTS_REQ_PROC_MAIN_LOCK(c_p);
+     HEAVY_SWAPIN;
      goto do_schedule;
  }
 
  OpCase(continue_exit): {
+     HEAVY_SWAPOUT;
      ERTS_UNREQ_PROC_MAIN_LOCK(c_p);
      erts_continue_exit_process(c_p);
      ERTS_REQ_PROC_MAIN_LOCK(c_p);
+     HEAVY_SWAPIN;
      goto do_schedule;
  }
 
@@ -1301,18 +1298,6 @@ void erts_dirty_process_main(ErtsSchedulerData *esdp)
 }
 
 static ErtsCodeMFA *
-gcbif2mfa(void* gcf)
-{
-    int i;
-    for (i = 0; erts_gc_bifs[i].bif; i++) {
-	if (erts_gc_bifs[i].gc_bif == gcf)
-	    return &bif_export[erts_gc_bifs[i].exp_ix]->info.mfa;
-    }
-    erts_exit(ERTS_ERROR_EXIT, "bad gc bif");
-    return NULL;
-}
-
-static ErtsCodeMFA *
 ubif2mfa(void* uf)
 {
     int i;
@@ -1320,7 +1305,7 @@ ubif2mfa(void* uf)
 	if (erts_u_bifs[i].bif == uf)
 	    return &bif_export[erts_u_bifs[i].exp_ix]->info.mfa;
     }
-    erts_exit(ERTS_ERROR_EXIT, "bad u bif");
+    erts_exit(ERTS_ERROR_EXIT, "bad u bif: %p\n", uf);
     return NULL;
 }
 
@@ -1484,9 +1469,24 @@ next_catch(Process* c_p, Eterm *reg) {
     BeamInstr i_return_time_trace = beam_return_time_trace[0];
 
     ptr = prev = c_p->stop;
-    ASSERT(is_CP(*ptr));
     ASSERT(ptr <= STACK_START(c_p));
-    if (ptr == STACK_START(c_p)) return NULL;
+
+    /* This function is only called if we have active catch tags or have
+     * previously called a function that was exception-traced. As the exception
+     * trace flag isn't cleared after the traced function returns (and the
+     * catch tag inserted by it is gone), it's possible to land here with an
+     * empty stack, and the process should simply die when that happens. */
+    if (ptr == STACK_START(c_p)) {
+        ASSERT(!active_catches && IS_TRACED_FL(c_p, F_EXCEPTION_TRACE));
+        return NULL;
+    }
+
+    /*
+     * Better safe than sorry here. In debug builds, produce a core
+     * dump if the top of the stack doesn't point to a continuation
+     * pointer. In other builds, ignore a non-CP at the top of stack.
+     */
+    ASSERT(is_CP(*ptr));
     if ((is_not_CP(*ptr) || (*cp_val(*ptr) != i_return_trace &&
 			     *cp_val(*ptr) != i_return_to_trace &&
 			     *cp_val(*ptr) != i_return_time_trace ))
@@ -1903,6 +1903,25 @@ static int is_raised_exc(Eterm exc) {
     }
 }
 
+static Eterm *get_freason_ptr_from_exc(Eterm exc) {
+    static Eterm dummy_freason;
+    struct StackTrace* s;
+
+    if (exc == NIL) {
+        /*
+         * Is is not exactly clear when exc can be NIL. Probably only
+         * when the exception has been generated from native code.
+         * Return a pointer to an Eterm that can be safely written and
+         * ignored.
+         */
+	return &dummy_freason;
+    } else {
+	ASSERT(is_list(exc));
+        s = (struct StackTrace *) big_val(CDR(list_val(exc)));
+        return &s->freason;
+    }
+}
+
 /*
  * Creating a list with the argument registers
  */
@@ -2315,12 +2334,16 @@ fixed_apply(Process* p, Eterm* reg, Uint arity,
     function = reg[arity+1];
 
     if (is_not_atom(function)) {
+        Eterm bad_args;
     error:
-	p->freason = BADARG;
-	reg[0] = module;
-	reg[1] = function;
-	reg[2] = NIL;
-	return 0;
+        bad_args = make_arglist(p, reg, arity);
+
+        p->freason = BADARG;
+        reg[0] = module;
+        reg[1] = function;
+        reg[2] = bad_args;
+
+        return 0;
     }
 
     if (is_not_atom(module)) goto error;
@@ -2669,6 +2692,19 @@ new_fun(Process* p, Eterm* reg, ErlFunEntry* fe, int num_free)
 	*hp++ = reg[i];
     }
     return make_fun(funp);
+}
+
+static int
+is_function2(Eterm Term, Uint arity)
+{
+    if (is_fun(Term)) {
+	ErlFunThing* funp = (ErlFunThing *) fun_val(Term);
+	return funp->arity == arity;
+    } else if (is_export(Term)) {
+	Export* exp = (Export *) (export_val(Term)[1]);
+	return exp->info.mfa.arity == arity;
+    }
+    return 0;
 }
 
 static Eterm get_map_element(Eterm map, Eterm key)
@@ -3062,12 +3098,14 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live, Uint n, Eterm* new_p
     Uint need;
     flatmap_t *old_mp, *mp;
     Eterm res;
+    Eterm* old_hp;
     Eterm* hp;
     Eterm* E;
     Eterm* old_keys;
     Eterm* old_vals;
     Eterm new_key;
     Eterm map;
+    int changed = 0;
 
     n /= 2;		/* Number of values to be updated */
     ASSERT(n > 0);
@@ -3134,6 +3172,7 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live, Uint n, Eterm* new_p
      * Update map, keeping the old key tuple.
      */
 
+    old_hp = p->htop;
     hp = p->htop;
     E = p->stop;
 
@@ -3156,20 +3195,26 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live, Uint n, Eterm* new_p
 	    /* Not same keys */
 	    *hp++ = *old_vals;
 	} else {
-	    GET_TERM(new_p[1], *hp);
-	    hp++;
-	    n--;
+            GET_TERM(new_p[1], *hp);
+            if(*hp != *old_vals) changed = 1;
+            hp++;
+            n--;
 	    if (n == 0) {
-		/*
-		 * All updates done. Copy remaining values
-		 * and return the result.
-		 */
-		for (i++, old_vals++; i < num_old; i++) {
-		    *hp++ = *old_vals++;
-		}
-		ASSERT(hp == p->htop + need);
-		p->htop = hp;
-		return res;
+                /*
+                * All updates done. Copy remaining values
+                * if any changed or return the original one.
+                */
+                if(changed) {
+		    for (i++, old_vals++; i < num_old; i++) {
+		        *hp++ = *old_vals++;
+		    }
+		    ASSERT(hp == p->htop + need);
+		    p->htop = hp;
+		    return res;
+                } else {
+                    p->htop = old_hp;
+                    return map;
+                }
 	    } else {
 		new_p += 2;
 		GET_TERM(*new_p, new_key);
@@ -3231,20 +3276,23 @@ erts_is_builtin(Eterm Mod, Eterm Name, int arity)
 
 
 /*
- * Return the current number of reductions for the given process.
+ * Return the current number of reductions consumed by the given process.
  * To get the total number of reductions, p->reds must be added.
  */
 
 Uint
-erts_current_reductions(Process *current, Process *p)
+erts_current_reductions(Process *c_p, Process *p)
 {
-    if (current != p) {
+    Sint reds_left;
+    if (c_p != p || !(erts_atomic32_read_nob(&c_p->state)
+                      & ERTS_PSFLG_RUNNING)) {
 	return 0;
-    } else if (current->fcalls < 0 && ERTS_PROC_GET_SAVED_CALLS_BUF(current)) {
-	return current->fcalls + CONTEXT_REDS;
+    } else if (c_p->fcalls < 0 && ERTS_PROC_GET_SAVED_CALLS_BUF(c_p)) {
+	reds_left = c_p->fcalls + CONTEXT_REDS;
     } else {
-	return REDS_IN(current) - current->fcalls;
+        reds_left = c_p->fcalls;
     }
+    return REDS_IN(c_p) - reds_left - erts_proc_sched_data(p)->virtual_reds;
 }
 
 int

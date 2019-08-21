@@ -55,7 +55,9 @@ XML_REF3_EFILES = \
 	persistent_term.xml \
 	atomics.xml \
 	counters.xml \
-	zlib.xml
+	zlib.xml \
+	socket.xml \
+	net.xml
 
 XML_REF3_FILES = \
 	$(XML_REF3_EFILES) \
@@ -65,7 +67,22 @@ XML_REF3_FILES = \
 	erts_alloc.xml
 
 XML_PART_FILES = \
-	part.xml
+	part.xml internal.xml
+
+XML_INTERNAL_FILES = \
+	CarrierMigration.xml	\
+	ThreadProgress.xml	\
+	CodeLoading.xml		\
+	Tracing.xml		\
+	DelayedDealloc.xml	\
+	beam_makeops.xml	\
+	GarbageCollection.xml	\
+	PTables.xml		\
+	PortSignals.xml		\
+	ProcessManagementOptimizations.xml \
+	SuperCarrier.xml        \
+	CountingInstructions.xml
+
 
 XML_CHAPTER_FILES = \
 	introduction.xml \
@@ -77,6 +94,7 @@ XML_CHAPTER_FILES = \
 	driver.xml \
 	absform.xml \
 	inet_cfg.xml \
+	socket_usage.xml \
 	erl_ext_dist.xml \
 	erl_dist_protocol.xml \
 	communication.xml \
@@ -93,6 +111,8 @@ GIF_FILES = \
 XML_FILES = \
 	$(BOOK_FILES) $(XML_CHAPTER_FILES) \
 	$(XML_PART_FILES) $(XML_REF3_FILES) $(XML_REF1_FILES) $(XML_APPLICATION_FILES)
+
+XML_GEN_FILES = $(XML_INTERNAL_FILES:%=$(XMLDIR)/%)
 
 # ----------------------------------------------------
 
@@ -113,6 +133,12 @@ SPECS_FILES = $(XML_REF3_EFILES:%.xml=$(SPECDIR)/specs_%.xml)
 
 TOP_SPECS_FILE = specs.xml
 
+XML_FIGURE_DIR = $(XMLDIR)/figures
+
+INTERNAL_DOC_PNG_FILES = $(wildcard ../../emulator/internal_doc/figures/*.png)
+PNG_FILES = $(notdir $(INTERNAL_DOC_PNG_FILES))
+XMLDIR_PNG_FILES = $(PNG_FILES:%=$(XML_FIGURE_DIR)/%)
+
 # ----------------------------------------------------
 # FLAGS
 # ----------------------------------------------------
@@ -125,10 +151,15 @@ SPECS_FLAGS = -I$(KERNEL_SRC) -I$(KERNEL_INCLUDE)
 # ----------------------------------------------------
 # Targets
 # ----------------------------------------------------
+_create_dirs := $(shell mkdir -p $(XML_FIGURE_DIR))
+
 $(HTMLDIR)/%.gif: %.gif
 	$(INSTALL_DATA) $< $@
 
-docs: man pdf html $(INFO_FILE)
+$(XML_FIGURE_DIR)/%.png: ../../emulator/internal_doc/figures/%.png
+	$(INSTALL_DATA) $< $@
+
+docs: figures man pdf html $(INFO_FILE)
 
 $(TOP_PDF_FILE): $(XML_FILES)
 
@@ -143,8 +174,11 @@ gifs: $(GIF_FILES:%=$(HTMLDIR)/%)
 $(INFO_FILE): $(INFO_FILE_SRC) $(ERL_TOP)/make/$(TARGET)/otp.mk
 	sed -e 's;%RELEASE%;$(SYSTEM_VSN);' $(INFO_FILE_SRC) > $(INFO_FILE)
 
+figures: $(XMLDIR_PNG_FILES)
 
 debug opt:
+
+ldocs: xmllint local_docs
 
 clean:
 	rm -rf $(HTMLDIR)/*
@@ -159,6 +193,9 @@ $(SPECDIR)/specs_%.xml:
 	$(gen_verbose)escript $(SPECS_EXTRACTOR) $(SPECS_FLAGS) \
                 -o$(dir $@) -module $(patsubst $(SPECDIR)/specs_%.xml,%,$@)
 
+$(XMLDIR)/%.xml: ../../emulator/internal_doc/%.md $(ERL_TOP)/make/emd2exml
+	$(ERL_TOP)/make/emd2exml $< $@
+
 # ----------------------------------------------------
 # Release Target
 # ----------------------------------------------------
@@ -168,8 +205,11 @@ release_docs_spec: docs
 	$(INSTALL_DIR) "$(RELSYSDIR)/doc/pdf"
 	$(INSTALL_DATA) $(TOP_PDF_FILE) "$(RELSYSDIR)/doc/pdf"
 	$(INSTALL_DIR) "$(RELSYSDIR)/doc/html"
+	$(INSTALL_DIR) "$(RELSYSDIR)/doc/html/figures"
 	$(INSTALL_DATA) $(HTMLDIR)/* \
 		"$(RELSYSDIR)/doc/html"
+	$(INSTALL_DATA) $(XMLDIR)/figures/* \
+		"$(RELSYSDIR)/doc/html/figures"
 	$(INSTALL_DATA) $(ERL_TOP)/erts/example/time_compat.erl \
 		"$(RELSYSDIR)/doc/html"
 	$(INSTALL_DATA) $(ERL_TOP)/lib/kernel/examples/gen_tcp_dist/src/gen_tcp_dist.erl \

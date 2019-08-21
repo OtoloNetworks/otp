@@ -152,10 +152,10 @@
 %% returned configuration must therefore also be returned from
 %% the calling `init_per_*'.
 %%
-%% If the initialization fails, e.g. if a required release can
-%% not be found, the function returns `{skip,Reason}'. In
+%% If the initialization fails, e.g. if a required release
+%% cannot be found, the function returns `{skip,Reason}'. In
 %% this case the other test support functions in this mudule
-%% can not be used.
+%% cannot be used.
 %%
 %% Example:
 %%
@@ -426,7 +426,7 @@ init_upgrade_test(Level) ->
     case OldRel of
 	false ->
 	    ct:log("Release ~tp is not available."
-		   " Upgrade on '~p' level can not be tested.",
+		   " Upgrade on '~p' level cannot be tested.",
 		   [FromVsn,Level]),
 	    undefined;
 	_ ->
@@ -528,7 +528,7 @@ target_system(Apps,CreateDir,InstallDir,{FromVsn,_,AllAppsVsns,Path}) ->
 				     {path,Path}]]),
 
     %% Unpack the tar to complete the installation
-    erl_tar:extract(RelName ++ ".tar.gz", [{cwd, InstallDir}, compressed]),
+    ok = erl_tar:extract(RelName ++ ".tar.gz", [{cwd, InstallDir}, compressed]),
 
     %% Add bin and log dirs
     BinDir = filename:join([InstallDir, "bin"]),
@@ -554,11 +554,11 @@ target_system(Apps,CreateDir,InstallDir,{FromVsn,_,AllAppsVsns,Path}) ->
 
     %% create start_erl.data, sys.config and start.src
     StartErlData = filename:join([InstallDir, "releases", "start_erl.data"]),
-    write_file(StartErlData, io_lib:fwrite("~s ~s~n", [ErtsVsn, FromVsn])),
+    ok = write_file(StartErlData, io_lib:fwrite("~s ~s~n", [ErtsVsn, FromVsn])),
     SysConfig = filename:join([InstallDir, "releases", FromVsn, "sys.config"]),
-    write_file(SysConfig, "[]."),
+    ok = write_file(SysConfig, "[]."),
     StartSrc = filename:join(ErtsBinDir,"start.src"),
-    write_file(StartSrc,start_script()),
+    ok = write_file(StartSrc,start_script()),
     ok = file:change_mode(StartSrc,8#0755),
 
     %% Make start_erl executable
@@ -620,7 +620,7 @@ upgrade_system(Apps, FromRel, CreateDir, InstallDir, {_,ToVsn,_,_}) ->
 			      [{path,[FromPath]},
 			       {outdir,CreateDir}]]),
     SysConfig = filename:join([CreateDir, "sys.config"]),
-    write_file(SysConfig, "[]."),
+    ok = write_file(SysConfig, "[]."),
 
     ok = systools(make_tar,[RelName,[{erts,code:root_dir()}]]),
 
@@ -858,7 +858,7 @@ subst_file(Src, Dest, Vars, Opts) ->
     {ok, Bin} = file:read_file(Src),
     Conts = unicode:characters_to_list(Bin),
     NConts = subst(Conts, Vars),
-    write_file(Dest, NConts),
+    ok = write_file(Dest, NConts),
     case lists:member(preserve, Opts) of
         true ->
             {ok, FileInfo} = file:read_file_info(Src),

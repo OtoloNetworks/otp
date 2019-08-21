@@ -578,6 +578,7 @@ number &lt; atom &lt; reference &lt; fun &lt; port &lt; pid &lt; tuple &lt; map 
         ascending term order and then by values in key order.
         In maps key order integers types are considered less than floats types.
     </p>
+    <p>Atoms are compared using their string value, codepoint by codepoint.</p>
       <p>When comparing an integer to a float, the term with the lesser
       precision is converted into the type of the other term, unless the
       operator is one of <c>=:=</c> or <c>=/=</c>. A float is more precise than
@@ -1220,10 +1221,10 @@ Ei = Value |
 &lt;&lt;1,17,0,42&gt;&gt;
 10> <input>H.</input>
 &lt;&lt;17,0,42&gt;&gt;
-11> <input>&lt;&lt;G,H/bitstring&gt;&gt; = &lt;&lt;1,17,42:12&gt;&gt;.</input>
-&lt;&lt;1,17,1,10:4&gt;&gt;
-12> <input>H.</input>
-&lt;&lt;17,1,10:4&gt;&gt;
+11> <input>&lt;&lt;G,J/bitstring&gt;&gt; = &lt;&lt;1,17,42:12&gt;&gt;.</input>
+&lt;&lt;1,17,2,10:4&gt;&gt;
+12> <input>J.</input>
+&lt;&lt;17,2,10:4&gt;&gt;
 13> <input>&lt;&lt;1024/utf8&gt;&gt;.</input>
 &lt;&lt;208,128&gt;&gt;
 </pre>

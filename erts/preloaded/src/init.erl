@@ -200,12 +200,6 @@ boot(BootArgs) ->
     register(init, self()),
     process_flag(trap_exit, true),
 
-    %% Load the static nifs
-    zlib:on_load(),
-    erl_tracer:on_load(),
-    prim_buffer:on_load(),
-    prim_file:on_load(),
-
     {Start0,Flags,Args} = parse_boot_args(BootArgs),
     %% We don't get to profile parsing of BootArgs
     case b2a(get_flag(profile_boot, Flags, false)) of
@@ -483,13 +477,16 @@ do_handle_msg(Msg,State) ->
 	{From, {ensure_loaded, _}} ->
 	    From ! {init, not_allowed};
 	X ->
+            %% This is equal to calling logger:info/3 which we don't
+            %% want to do from the init process, at least not during
+            %% system boot. We don't want to call logger:timestamp()
+            %% either.
 	    case whereis(user) of
 		undefined ->
-		    Time = erlang:monotonic_time(microsecond),
                     catch logger ! {log, info, "init got unexpected: ~p", [X],
                                     #{pid=>self(),
                                       gl=>self(),
-                                      time=>Time,
+                                      time=>os:system_time(microsecond),
                                       error_logger=>#{tag=>info_msg}}};
 		User ->
 		    User ! X,

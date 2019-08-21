@@ -743,8 +743,9 @@ non_transaction(OldState, Fun, Args, ActivityKind, Mod) ->
 	{aborted, Reason} -> mnesia:abort(Reason);
 	Res -> Res
     catch
-	throw:Throw -> throw(Throw);
-	_:Reason    -> exit(Reason)
+        throw:Throw     -> throw(Throw);
+        error:Reason:ST -> exit({Reason, ST});
+        exit:Reason     -> exit(Reason)
     after
 	case OldState of
 	    undefined -> erase(mnesia_activity_state);
@@ -1661,7 +1662,7 @@ commit_participant(Coord, Tid, Bin, C0, DiscNs, _RamNs) ->
     ?eval_debug_fun({?MODULE, commit_participant, pre}, [{tid, Tid}]),
     try mnesia_schema:prepare_commit(Tid, C0, {part, Coord}) of
 	{Modified, C = #commit{}, DumperMode} ->
-	    %% If we can not find any local unclear decision
+	    %% If we cannot find any local unclear decision
 	    %% we should presume abort at startup recovery
 	    case lists:member(node(), DiscNs) of
 		false ->

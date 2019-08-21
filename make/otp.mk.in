@@ -4,7 +4,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1997-2016. All Rights Reserved.
+# Copyright Ericsson AB 1997-2019. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -51,6 +51,8 @@ TYPES = @TYPES@
 
 USE_PGO = @USE_PGO@
 
+USE_ESOCK = @USE_ESOCK@
+
 # Slash separated list of return values from $(origin VAR)
 # that are untrusted - set default in this file instead.
 # The list is not space separated since some return values
@@ -73,6 +75,7 @@ INSTALL_DIR     = @INSTALL_DIR@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
 INSTALL_SCRIPT  = @INSTALL_SCRIPT@
 INSTALL_DATA    = @INSTALL_DATA@
+INSTALL_DIR_DATA = $(ERL_TOP)/make/install_dir_data.sh
 
 CC = @CC@
 GCC = @GCC@
@@ -274,6 +277,7 @@ XSLTPROC = @XSLTPROC@
 FOP = @FOP@
 XMLLINT = @XMLLINT@
 CP = @CP@
+MKDIR = @MKDIR@
 
 DOCGEN=$(ERL_TOP)/lib/erl_docgen
 FOP_CONFIG = $(DOCGEN)/priv/fop.xconf
